@@ -97,7 +97,7 @@ first run; the portable README tells users what to click.
 | Linux | `webkit2gtk-4.1`, `libayatana-appindicator3`, `librsvg2`, `build-essential` |
 
 ```bash
-git clone <this repository>
+git clone https://github.com/guptaRishi00/usb-encrypter.git
 cd usb-encrypter
 npm install
 npm run dev

@@ -218,3 +218,11 @@ Nothing committed.
   holding the exe, and NSIS/WiX tooling would be downloaded on first use. GitHub Release needs
   a repo (the folder is not one) and `gh` (absent) or the user's account. Asked before any of
   that. Nothing committed.
+
+## 2026-09-10 — /task: push to github.com/guptaRishi00/usb-encrypter
+
+- User created the repo and gave the URL (superseding the gh-install plan). Added `origin`,
+  pushed `main` (2 commits, 74 files; `release/`, `dist/`, `target/`, `node_modules/` ignored),
+  verified with `git ls-remote`. Tagged `v0.1.0` and pushed the tag so a Release can be cut
+  from it. Release assets (`release/*.zip`, `SHA256SUMS.txt`, `RELEASE_NOTES.md`) are ready
+  locally; attaching them needs the GitHub UI or `gh` (not installed).
