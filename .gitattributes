@@ -1,0 +1,5 @@
+# Keep line endings stable across contributors; the .cmd launchers are
+# generated at runtime with CRLF and are never tracked.
+* text=auto eol=lf
+*.ico binary
+*.png binary
