@@ -346,3 +346,9 @@ Nothing committed.
 
 - Committed the relock countdown (cli.rs), its README paragraph and the log; pushed `main`.
   No tag: not asked.
+
+## 2026-09-10 — /task: where is the .dmg
+
+- Nowhere yet: the workflow had never run. Bumped 0.1.0 → 0.2.0 (package.json, lock,
+  tauri.conf.json, Cargo.toml/lock), committed, tagged `v0.2.0`, pushed both. The dmg is
+  produced by the macOS runner and attached to the draft release for that tag.

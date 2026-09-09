@@ -1,6 +1,6 @@
 [package]
 name = "vaultdrive"
-version = "0.1.0"
+version = "0.2.0"
 description = "VaultDrive - portable, password-protected encrypted folder vaults"
 authors = ["VaultDrive"]
 edition = "2021"
