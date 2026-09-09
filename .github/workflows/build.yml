@@ -1,0 +1,105 @@
+# Builds VaultDrive for Windows and macOS on GitHub's own runners.
+#
+# Why this exists: VaultDrive is a desktop program, and a program built for one
+# operating system cannot run on the other. Producing the macOS app needs a Mac,
+# and this workflow supplies one. Push a tag like `v0.2.0` and a draft GitHub
+# Release appears with installers for both platforms attached; run it by hand
+# from the Actions tab to get the same files as downloadable artefacts without
+# cutting a release.
+#
+# Nothing here signs the binaries. Unsigned builds work, but Windows SmartScreen
+# and macOS Gatekeeper both warn on first launch; the README says what to click.
+
+name: Build desktop apps
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows
+            # NSIS installer + MSI, and the bare exe for the portable zip.
+            args: ''
+          - os: macos-latest
+            label: macos
+            # One .app / .dmg that runs on Apple Silicon and Intel Macs.
+            args: '--target universal-apple-darwin'
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # The universal macOS build links both slices; Windows needs neither.
+          targets: ${{ matrix.label == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # Run the same suite the README documents before producing anything.
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+        if: matrix.label == 'windows'
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: ${{ matrix.args }}
+          # On a tag push, attach the bundles to a draft release named after it.
+          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('VaultDrive {0}', github.ref_name) || '' }}
+          releaseDraft: true
+          prerelease: false
+
+      # The portable Windows zip: bare exe plus the USB-drive note, the shape
+      # the README describes. Only the Windows runner has the exe.
+      - name: Package portable zip
+        if: matrix.label == 'windows'
+        shell: pwsh
+        run: |
+          $ver = (Get-Content package.json | ConvertFrom-Json).version
+          New-Item -ItemType Directory -Force stage | Out-Null
+          Copy-Item src-tauri/target/release/VaultDrive.exe stage/
+          Copy-Item portable/README.txt stage/
+          Compress-Archive -Path stage/* -DestinationPath "VaultDrive-$ver-windows-portable.zip"
+          (Get-FileHash "VaultDrive-$ver-windows-portable.zip" -Algorithm SHA256).Hash + "  VaultDrive-$ver-windows-portable.zip" | Out-File SHA256SUMS-windows.txt -Encoding ascii
+
+      - name: Attach portable zip to the release
+        if: matrix.label == 'windows' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: gh release upload ${{ github.ref_name }} VaultDrive-*-windows-portable.zip SHA256SUMS-windows.txt --clobber
+
+      # Whatever was produced, keep it as a downloadable artefact too, so a
+      # manual run yields files without a release.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vaultdrive-${{ matrix.label }}
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app/**
+            VaultDrive-*-windows-portable.zip
+            SHA256SUMS-windows.txt

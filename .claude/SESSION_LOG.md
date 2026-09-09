@@ -297,3 +297,23 @@ Nothing committed.
   the in-place tests, so a per-feature split would not have been honest — and pushed `main`.
   Not tagged: the user asked to push, not to cut a release; `release/` still holds the 0.1.0
   zip, which predates every change in this commit.
+
+## 2026-09-10 — /task: how to install on other machines, Windows and macOS
+
+- Windows: refreshed `release/VaultDrive-0.1.0-windows-portable.zip` + `SHA256SUMS.txt` from
+  the 01:51 exe (the previous zip predated authenticator mode and the launchers). The NSIS/MSI
+  installer was not built locally: the GUI holds the exe and Tauri would download NSIS/WiX.
+- macOS: **no build possible on this host.** Added `.github/workflows/build.yml`
+  (tauri-action, `windows-latest` + `macos-latest`, universal-apple-darwin, draft Release on
+  `v*` tags, artefacts on manual dispatch, `cargo test` on Windows before bundling, portable
+  zip + checksum attached by `gh release upload`). README "Installing" rewritten for both
+  platforms, including the unsigned-app dance (SmartScreen / Gatekeeper `xattr`).
+- **Unverified:** the workflow has not run yet — nothing pushed this task. Its first run
+  (next tag push or a manual dispatch) will show whether the artefact globs match Tauri's
+  output paths. PyYAML gotcha: it reads the `on:` key as boolean `True`; GitHub does not.
+
+## 2026-09-10 — /task: push these
+
+- Committed and pushed the build workflow, the rewritten Installing section and the log.
+  Not tagged: "push these" is not "cut a release". The workflow now exists on `main` and can
+  be run from the Actions tab (workflow_dispatch) or by pushing a `v*` tag.

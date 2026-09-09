@@ -69,22 +69,62 @@ the container lands and whether the originals are removed.
 
 ## Installing
 
-VaultDrive is a desktop program, so "deploying" it means distributing files, not
-hosting a site. The artefacts live in `release/`:
+VaultDrive is a desktop program, so putting it on another machine means
+downloading a build for that machine. A build made for Windows cannot run on a
+Mac or vice versa.
 
-| File | What it is |
-|---|---|
-| `VaultDrive-<version>-windows-portable.zip` | `VaultDrive.exe` plus a README. Unzip anywhere, including a USB stick. No installer. |
-| `SHA256SUMS.txt` | Checksums for the zip and the bare exe, so a download can be verified. |
+### Windows
 
-Build them with `npm run build:portable`, then zip the exe with
-`portable/README.txt`. `npm run build` additionally produces NSIS and MSI
-installers under `src-tauri/target/release/bundle/`.
+Two options, both in `release/` here and on the GitHub Releases page:
 
-Publish them somewhere with a stable URL — a GitHub Release is the conventional
-home for a desktop binary — and link to that from wherever you want a download
-page. Until the executable is code-signed, Windows SmartScreen will warn on
-first run; the portable README tells users what to click.
+| | What you get | Best for |
+|---|---|---|
+| `VaultDrive-<version>-windows-portable.zip` | `VaultDrive.exe` plus a README. Unzip anywhere, including onto the USB stick. No installer, nothing written to Program Files. | Carrying it on the drive; locked folders that must open on any PC |
+| `VaultDrive_<version>_x64-setup.exe` | A normal installer with a Start-menu entry and an uninstaller. Built by the workflow below. | A PC you use regularly |
+
+Both need the WebView2 runtime for the window, which Windows 11 and current
+Windows 10 already include. `Unlock.cmd` inside a locked folder does not need it.
+First launch shows a SmartScreen warning because the executable is not
+code-signed: click *More info*, then *Run anyway*.
+
+### macOS
+
+The Mac build is `VaultDrive_<version>_universal.dmg` on the Releases page,
+one file for Apple Silicon and Intel. Open it and drag VaultDrive to
+Applications. Because the app is not notarised, macOS refuses it on first launch
+with "cannot be opened because the developer cannot be verified": right-click
+the app, choose *Open*, and confirm once. Alternatively, in Terminal:
+
+```bash
+xattr -d com.apple.quarantine /Applications/VaultDrive.app
+```
+
+**Status, stated plainly:** the macOS build is produced only by the automated
+workflow and has not been exercised by hand on a Mac. The `.command` launchers
+and the console-mode password prompt are untested there.
+
+### Where the builds come from
+
+You do not need a Mac to produce the Mac build. `.github/workflows/build.yml`
+builds both platforms on GitHub's runners:
+
+- **Push a tag** such as `v0.2.0` and a *draft* GitHub Release appears with the
+  Windows installer, the MSI, the portable zip with its checksum, and the
+  macOS `.dmg` attached. Review it, then publish.
+- **Run it by hand** from the repository's *Actions* tab to get the same files
+  as downloadable artefacts without cutting a release.
+
+To build locally instead: `npm run build:portable` for the bare Windows exe,
+`npm run build` for installers on whichever platform you are on. Building on a
+Mac needs the Xcode command-line tools and Rust, nothing else.
+
+### Locked folders need no installation at all
+
+A folder locked with "Make it open on other computers" carries its own copy of
+VaultDrive and a launcher for each platform. On Windows, double-click
+`Unlock.cmd`. On a Mac, double-click `Unlock.command`, which needs the Mac
+program (`VaultDrive-macos`) to have been added by locking the folder once from
+a Mac; until then it says so and points you at the application.
 
 ---
 
