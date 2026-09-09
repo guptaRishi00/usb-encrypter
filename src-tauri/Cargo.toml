@@ -1,0 +1,71 @@
+[package]
+name = "vaultdrive"
+version = "0.1.0"
+description = "VaultDrive - portable, password-protected encrypted folder vaults"
+authors = ["VaultDrive"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+# The vault engine lives in the library so integration tests in `tests/` can
+# exercise it directly, without going through Tauri.
+name = "vaultdrive_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Named to match `productName` in tauri.conf.json, so a `--no-bundle` build
+# produces `VaultDrive.exe` — the name the README and the USB layout use — and
+# not the lowercase crate name.
+[[bin]]
+name = "VaultDrive"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+
+# --- cryptography (established, audited primitives only) ---
+chacha20poly1305 = { version = "0.10", features = ["stream"] }
+argon2 = "0.5"
+hkdf = "0.12"
+sha2 = "0.10"
+zeroize = { version = "1", features = ["derive"] }
+subtle = "2"
+
+# --- serialization / errors ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+# --- filesystem / platform ---
+walkdir = "2"
+sysinfo = "0.32"
+
+# --- logging ---
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+# Unoptimised ChaCha20 and Argon2 run at a few megabytes a second, which turns
+# the encryption round-trip tests into a minute and a half of waiting. Building
+# dependencies with optimisation keeps our own code debuggable and makes the
+# suite roughly forty times faster.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
