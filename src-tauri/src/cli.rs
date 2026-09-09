@@ -30,9 +30,18 @@ pub const EXIT_FAILED: i32 = 1;
 pub fn maybe_run(args: &[String]) -> Option<i32> {
     let flag = args.get(1).map(String::as_str)?;
     let folder = args.get(2).map(String::as_str);
+    let relock_after = match relock_after_arg(args) {
+        Ok(v) => v,
+        Err(msg) => {
+            console::attach();
+            eprintln!("{msg}");
+            print_usage();
+            return Some(EXIT_USAGE);
+        }
+    };
     match flag {
-        "--unlock-folder" => Some(run(folder, Mode::Unlock)),
-        "--lock-folder" => Some(run(folder, Mode::Lock)),
+        "--unlock-folder" => Some(run(folder, Mode::Unlock, relock_after)),
+        "--lock-folder" => Some(run(folder, Mode::Lock, relock_after)),
         "--help" | "-h" | "/?" => {
             console::attach();
             print_usage();
@@ -48,16 +57,37 @@ enum Mode {
     Lock,
 }
 
+/// How long an unlocked folder stays open before the launcher locks it again.
+///
+/// A minute is long enough to copy a file out or drop one in, short enough
+/// that a drive left in someone else's machine does not sit open all
+/// afternoon. `--relock-after 0` turns it off.
+pub const DEFAULT_RELOCK_AFTER_SECS: u64 = 60;
+
+/// Parse `--relock-after <seconds>` anywhere after the folder argument.
+fn relock_after_arg(args: &[String]) -> std::result::Result<u64, String> {
+    let mut it = args.iter().skip(3);
+    while let Some(a) = it.next() {
+        if a == "--relock-after" {
+            let v = it.next().ok_or("--relock-after needs a number of seconds.")?;
+            return v.parse::<u64>().map_err(|_| format!("'{v}' is not a number of seconds."));
+        }
+    }
+    Ok(DEFAULT_RELOCK_AFTER_SECS)
+}
+
 fn print_usage() {
     println!("VaultDrive console mode");
     println!();
-    println!("  VaultDrive.exe --unlock-folder <folder>   restore a folder locked in place");
+    println!("  VaultDrive.exe --unlock-folder <folder> [--relock-after SECONDS]");
+    println!("      restore a folder locked in place, then lock it again after SECONDS");
+    println!("      (default {DEFAULT_RELOCK_AFTER_SECS}; 0 leaves it unlocked)");
     println!("  VaultDrive.exe --lock-folder <folder>     lock a folder in place");
     println!();
     println!("Run with no arguments to open the window.");
 }
 
-fn run(folder: Option<&str>, mode: Mode) -> i32 {
+fn run(folder: Option<&str>, mode: Mode, relock_after: u64) -> i32 {
     console::attach();
 
     let Some(folder) = folder else {
@@ -110,13 +140,13 @@ fn run(folder: Option<&str>, mode: Mode) -> i32 {
             println!("Checking the code with the server.");
             crate::remote::redeem(&auth.site, &auth.token, &code).and_then(|key| {
                 println!("Deriving the key. This takes a moment on purpose.");
-                unlock_folder_in_place(folder, &key, &Console::default()).map(|r| {
+                unlock_folder_in_place(folder, &key, &Console::default()).and_then(|r| {
                     println!();
                     println!(
                         "Done. {} file(s) and {} folder(s) are back in \"{name}\".",
                         r.files, r.folders
                     );
-                    println!("Run Lock.cmd when you want to lock it again.");
+                    hold_then_relock(folder, &name, &key, relock_after)
                 })
             })
         }
@@ -148,13 +178,13 @@ fn run(folder: Option<&str>, mode: Mode) -> i32 {
                 None => return EXIT_FAILED,
             };
             println!("Deriving the key. This takes a moment on purpose.");
-            unlock_folder_in_place(folder, password.as_bytes(), &Console::default()).map(|r| {
+            unlock_folder_in_place(folder, password.as_bytes(), &Console::default()).and_then(|r| {
                 println!();
                 println!(
                     "Done. {} file(s) and {} folder(s) are back in \"{name}\".",
                     r.files, r.folders
                 );
-                println!("Run Lock.cmd when you want to lock it again.");
+                hold_then_relock(folder, &name, password.as_bytes(), relock_after)
             })
         }
         Mode::Lock => {
@@ -210,6 +240,85 @@ fn run(folder: Option<&str>, mode: Mode) -> i32 {
             eprintln!();
             eprintln!("{e}");
             EXIT_FAILED
+        }
+    }
+}
+
+/// After an unlock: wait, then lock the folder again with the same secret.
+///
+/// The countdown runs only when a person is at the console. A script piping
+/// the password in gets an unlocked folder and its exit code straight away,
+/// because a script that wanted the folder locked again would call
+/// `--lock-folder` itself.
+///
+/// Stated limits: closing the window kills the countdown and leaves the folder
+/// unlocked, and a file still open in another program cannot be deleted at
+/// relock time, so the launcher reports it and offers to try again.
+fn hold_then_relock(folder: &Path, name: &str, secret: &[u8], after_secs: u64) -> crate::error::Result<()> {
+    if after_secs == 0 {
+        println!("Run Lock.cmd when you want to lock it again.");
+        return Ok(());
+    }
+    if !console::is_interactive() {
+        println!("(no console attached: leaving the folder unlocked)");
+        return Ok(());
+    }
+
+    println!();
+    println!("This window will lock \"{name}\" again in {after_secs} seconds.");
+    println!("Press Enter to lock it now. Closing this window instead leaves it UNLOCKED.");
+
+    // Whichever comes first: Enter on stdin, or the deadline.
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        let _ = io::stdin().lock().read_line(&mut line);
+        let _ = tx.send(());
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(after_secs);
+    loop {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        print!("\r  locking in {:>3} s   ", left.as_secs() + 1);
+        let _ = io::stdout().flush();
+        if rx.recv_timeout(std::time::Duration::from_secs(1).min(left)).is_ok() {
+            break;
+        }
+    }
+    println!("\r  locking now.          ");
+
+    loop {
+        match lock_folder_in_place(folder, secret, KdfParams::interactive(), true, &Console::default()) {
+            Ok(r) if r.removal_failures.is_empty() => {
+                println!();
+                println!("Locked again. {} file(s) and {} folder(s) are encrypted inside \"{name}\".", r.files, r.folders);
+                return Ok(());
+            }
+            Ok(r) => {
+                println!();
+                println!("Locked, but these could not be deleted and are still readable on disk:");
+                for f in &r.removal_failures {
+                    println!("  {f}");
+                }
+                println!("Close whatever has them open, then press Enter to try again.");
+                let mut line = String::new();
+                let _ = io::stdin().lock().read_line(&mut line);
+                // The vault now exists, so the next attempt must unlock first.
+                unlock_folder_in_place(folder, secret, &Console::default())?;
+            }
+            Err(e) => {
+                println!();
+                println!("Could not lock the folder: {e}");
+                println!("Press Enter to try again, or type q and Enter to leave it unlocked.");
+                let mut line = String::new();
+                let _ = io::stdin().lock().read_line(&mut line);
+                if line.trim().eq_ignore_ascii_case("q") {
+                    println!("Left unlocked. Run Lock.cmd when you are ready.");
+                    return Ok(());
+                }
+            }
         }
     }
 }
@@ -300,6 +409,16 @@ mod console {
     const STD_INPUT_HANDLE: u32 = -10i32 as u32;
     const ENABLE_ECHO_INPUT: u32 = 0x0004;
 
+    /// Whether a person is at the keyboard: stdin is a console, not a pipe or
+    /// a file.
+    pub fn is_interactive() -> bool {
+        // SAFETY: querying the mode of our own standard input handle.
+        unsafe {
+            let mut mode = 0u32;
+            GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mut mode) != 0
+        }
+    }
+
     /// Join the console of whatever launched us (cmd.exe, for the launchers),
     /// but only if we were given no standard input at all.
     ///
@@ -345,6 +464,16 @@ mod console {
     /// attach to on macOS or Linux.
     pub fn attach() {}
 
+    /// `test -t 0` in a child shell inherits our stdin, so it answers for us
+    /// without a `libc` binding.
+    pub fn is_interactive() -> bool {
+        Command::new("sh")
+            .args(["-c", "test -t 0"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
     /// Turn terminal echo off around `f` using `stty`, which every macOS and
     /// Linux system ships. Going through the program rather than `termios`
     /// avoids declaring a struct whose layout differs between the two.
@@ -381,6 +510,51 @@ mod tests {
         let mut line = String::from("  two  spaces  \n");
         normalize_password_line(&mut line);
         assert_eq!(line, "  two  spaces  ");
+    }
+
+    #[test]
+    fn relock_after_defaults_to_a_minute_and_parses_an_override() {
+        let base = |extra: &[&str]| {
+            let mut v = vec!["x".to_string(), "--unlock-folder".to_string(), "dir".to_string()];
+            v.extend(extra.iter().map(|s| s.to_string()));
+            v
+        };
+        assert_eq!(relock_after_arg(&base(&[])), Ok(DEFAULT_RELOCK_AFTER_SECS));
+        assert_eq!(DEFAULT_RELOCK_AFTER_SECS, 60);
+        assert_eq!(relock_after_arg(&base(&["--relock-after", "5"])), Ok(5));
+        assert_eq!(relock_after_arg(&base(&["--relock-after", "0"])), Ok(0));
+        assert!(relock_after_arg(&base(&["--relock-after"])).is_err());
+        assert!(relock_after_arg(&base(&["--relock-after", "soon"])).is_err());
+    }
+
+    #[test]
+    fn a_bad_relock_value_is_a_usage_error() {
+        let args = vec![
+            "x".to_string(), "--unlock-folder".to_string(), "dir".to_string(),
+            "--relock-after".to_string(), "lots".to_string(),
+        ];
+        assert_eq!(maybe_run(&args), Some(EXIT_USAGE));
+    }
+
+    #[test]
+    fn without_a_console_the_folder_is_left_unlocked_rather_than_relocked() {
+        // Under `cargo test` stdin is not a console, which is exactly the
+        // scripted case: the routine must return at once and lock nothing.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), b"x").unwrap();
+        let t = std::time::Instant::now();
+        hold_then_relock(dir.path(), "t", b"pw", 60).unwrap();
+        assert!(t.elapsed() < std::time::Duration::from_secs(5), "must not wait out the countdown");
+        assert!(dir.path().join("a.txt").exists());
+        assert!(!dir.path().join(crate::vault::IN_PLACE_VAULT_NAME).exists());
+    }
+
+    #[test]
+    fn zero_seconds_means_no_relock_at_all() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), b"x").unwrap();
+        hold_then_relock(dir.path(), "t", b"pw", 0).unwrap();
+        assert!(!dir.path().join(crate::vault::IN_PLACE_VAULT_NAME).exists());
     }
 
     #[test]

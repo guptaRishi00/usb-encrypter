@@ -254,8 +254,14 @@ redirected pipe or file otherwise (a script), asks for the password without
 echo, tolerates a leading UTF-8 byte-order mark on piped input, and works on the
 folder it sits in. Console mode never starts Tauri, so it needs **no installation, no window and
 no WebView2**: plug the drive into any Windows machine and double-click
-`Unlock.cmd`. Unlocking keeps the three launcher files so `Lock.cmd` can lock the
-folder again before you unplug. The launchers are never encrypted into the vault
+`Unlock.cmd`. **After unlocking, the window stays open and locks the folder
+again after 60 seconds**, or as soon as you press Enter, reusing the key that
+unlocked it so nothing is asked twice. Two limits, stated plainly: closing the
+window instead kills the countdown and leaves the folder unlocked, and a file
+still open in another program cannot be deleted at relock time, so the launcher
+names it and offers a retry. `VaultDrive.exe --unlock-folder <dir>
+--relock-after 0` disables the countdown; a script piping the password in never
+gets one, because a script that wanted the folder locked again would say so. The launchers are never encrypted into the vault
 and never deleted with the plaintext, on a first lock or a re-lock. There is no
 way to do this "without any program": Argon2id and XChaCha20-Poly1305 are not
 available to a bare `.cmd` or to PowerShell, so the folder has to carry the

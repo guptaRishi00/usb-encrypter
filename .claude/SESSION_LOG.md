@@ -317,3 +317,32 @@ Nothing committed.
 - Committed and pushed the build workflow, the rewritten Installing section and the log.
   Not tagged: "push these" is not "cut a release". The workflow now exists on `main` and can
   be run from the Actions tab (workflow_dispatch) or by pushing a `v*` tag.
+
+## 2026-09-10 — /task: auto-lock one minute after unlocking from the launcher
+
+- The previous turn's installer build was rejected by the user mid-call; dropped, not retried.
+- `hold_then_relock` in `cli.rs`: after a console-mode unlock the process stays alive,
+  counts down (default 60 s, `--relock-after N`, 0 disables), locks on Enter or at the
+  deadline, **reusing the secret that unlocked** (password bytes or the server-released key)
+  so nothing is asked twice. Countdown runs **only when stdin is a console**
+  (`GetConsoleMode` on Windows, `sh -c 'test -t 0'` elsewhere): a script piping the password
+  in gets an unlocked folder and returns at once — a script wanting a relock would call
+  `--lock-folder`. Relock failures (file held open elsewhere) are named with a retry loop;
+  `q` leaves the folder unlocked deliberately.
+- Stated limits (README): closing the window kills the countdown and leaves the folder
+  unlocked; nothing detached survives the window on purpose.
+- `cargo test` **226 passed, 0 failed** (4 new: arg parsing, usage error, non-interactive
+  returns at once without locking, zero disables). Rebuild in progress; real-console run to
+  follow.
+- **Verified with the 02:07 build:** piped `Unlock.cmd` returned in 1 s with "(no console
+  attached: leaving the folder unlocked)" — the interactive gate. Real console: password
+  typed (hidden) → "This window will lock ... again in 60 seconds" → countdown ticking
+  (51 s ... 28 s) with the plaintext genuinely on disk meanwhile → Enter → "locking now" →
+  "Locked again. 3 file(s) and 1 folder(s)". Relocked vault holds no plaintext; a fresh unlock
+  of it restores all 3 files SHA-256 identical. Harness slip of the day: PowerShell variables
+  are case-insensitive, so `$t` (a stopwatch) clobbered `$T` (the folder path).
+
+## 2026-09-10 — /task: push the code
+
+- Committed the relock countdown (cli.rs), its README paragraph and the log; pushed `main`.
+  No tag: not asked.
