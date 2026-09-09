@@ -7,7 +7,13 @@ import { PasswordField } from '../components/PasswordField';
 import * as api from '../services/api';
 import { asVaultError } from '../services/api';
 import { basename, bytes, quantity, shortPath } from '../services/format';
-import type { FolderLockState, UnlockReport, VaultError, VaultHeaderInfo } from '../types';
+import type {
+  AuthMode,
+  FolderLockState,
+  UnlockReport,
+  VaultError,
+  VaultHeaderInfo,
+} from '../types';
 
 /**
  * Two ways in, because there are two ways a folder can be protected: a
@@ -26,6 +32,8 @@ export function OpenVault({
   const [path, setPath] = useState(initialPath ?? '');
   const [folder, setFolder] = useState('');
   const [folderState, setFolderState] = useState<FolderLockState | null>(null);
+  const [authMode, setAuthMode] = useState<AuthMode>('password');
+  const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<VaultError | null>(null);
@@ -64,9 +72,12 @@ export function OpenVault({
       return;
     }
     let alive = true;
-    api
-      .folderLockState(folder)
-      .then((s) => alive && setFolderState(s))
+    Promise.all([api.folderLockState(folder), api.folderAuthMode(folder)])
+      .then(([s, m]) => {
+        if (!alive) return;
+        setFolderState(s);
+        setAuthMode(m);
+      })
       .catch(() => alive && setFolderState('unavailable'));
     return () => {
       alive = false;
@@ -101,12 +112,20 @@ export function OpenVault({
     }
   }
 
+  const byCode = source === 'folder' && authMode === 'authenticator';
+
   async function unlock() {
-    if (!password || busy) return;
+    if (busy) return;
+    if (byCode ? !/^\d{6}$/.test(code.trim()) : !password) return;
     setBusy(true);
     setError(null);
     try {
-      if (source === 'folder') {
+      if (byCode) {
+        const report = await api.unlockFolderWithAuthenticator(folder, code.trim());
+        setCode('');
+        setRestored(report);
+        setFolderState('unlocked');
+      } else if (source === 'folder') {
         const report = await api.unlockFolder(folder, password);
         setPassword('');
         setRestored(report);
@@ -120,6 +139,7 @@ export function OpenVault({
     } catch (e) {
       setError(asVaultError(e));
       setPassword('');
+      setCode('');
     } finally {
       setBusy(false);
     }
@@ -226,7 +246,11 @@ export function OpenVault({
               <Note tone="danger">That folder cannot be read.</Note>
             )}
             {folderState === 'locked' && (
-              <div className="faint">Locked by VaultDrive. Enter the password to restore it.</div>
+              <div className="faint">
+                {byCode
+                  ? 'Locked by VaultDrive with an authenticator app. Enter the current code to restore it (needs the internet).'
+                  : 'Locked by VaultDrive. Enter the password to restore it.'}
+              </div>
             )}
           </div>
         )}
@@ -241,20 +265,44 @@ export function OpenVault({
 
         {canUnlock && !restored && (
           <div className="panel stack">
-            <PasswordField
-              label={`Password for ${target}`}
-              value={password}
-              onChange={setPassword}
-              autoFocus
-              onEnter={unlock}
-            />
+            {byCode ? (
+              <label className="field">
+                <span className="field-label">Authenticator code for {target}</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  value={code}
+                  placeholder="123456"
+                  maxLength={6}
+                  style={{ maxWidth: 200, letterSpacing: '0.2em', fontFamily: 'var(--mono)' }}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+                  onKeyDown={(e) => e.key === 'Enter' && void unlock()}
+                />
+              </label>
+            ) : (
+              <PasswordField
+                label={`Password for ${target}`}
+                value={password}
+                onChange={setPassword}
+                autoFocus
+                onEnter={unlock}
+              />
+            )}
             <div className="row">
-              <button className="btn btn-primary" disabled={!password || busy} onClick={unlock}>
+              <button
+                className="btn btn-primary"
+                disabled={busy || (byCode ? !/^\d{6}$/.test(code.trim()) : !password)}
+                onClick={unlock}
+              >
                 {busy ? <SpinnerIcon /> : <KeyIcon size={16} />}
                 {busy
-                  ? source === 'folder'
-                    ? 'Restoring…'
-                    : 'Deriving key…'
+                  ? byCode
+                    ? 'Checking with the server…'
+                    : source === 'folder'
+                      ? 'Restoring…'
+                      : 'Deriving key…'
                   : source === 'folder'
                     ? 'Unlock folder'
                     : 'Unlock vault'}

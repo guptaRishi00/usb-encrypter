@@ -516,6 +516,22 @@ input::placeholder {
   line-height: 1.5;
 }
 
+/* The QR must be dark-on-white regardless of theme, or phones misread it. */
+.qr {
+  flex: none;
+  width: 236px;
+  height: 236px;
+  padding: 8px;
+  background: #fff;
+  border-radius: var(--radius);
+}
+
+.qr svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
 /* ---------------------------------------------------------------- strength */
 
 .strength {

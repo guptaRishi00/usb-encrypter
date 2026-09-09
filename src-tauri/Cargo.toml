@@ -44,6 +44,14 @@ thiserror = "2"
 walkdir = "2"
 sysinfo = "0.32"
 
+# --- authenticator-server mode ---
+# Talks to the user's usbvault-web deployment. rustls is bundled, so a locked
+# folder unlocks on a machine with no system TLS libraries.
+ureq = { version = "2", features = ["json"] }
+# Renders the enrolment QR as SVG in Rust; works under the window's CSP and
+# needs no CDN.
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+
 # --- logging ---
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

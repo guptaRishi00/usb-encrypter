@@ -78,6 +78,22 @@ pub enum VaultError {
     #[error("A folder cannot be moved inside itself.")]
     InvalidMove,
 
+    /// The authenticator server rejected the six-digit code.
+    #[error("Incorrect code.
+The vault could not be unlocked.")]
+    WrongCode,
+
+    #[error("Too many wrong codes. The authenticator server has paused this vault for a few minutes.")]
+    TooManyAttempts,
+
+    #[error("This vault unlocks through an authenticator server, and that server could not be reached. Check the internet connection and try again.")]
+    Offline,
+
+    /// Any other answer from the server. The text is the server's own, capped
+    /// in length so a hostile or broken server cannot flood the interface.
+    #[error("The authenticator server refused: {0}")]
+    RemoteAuth(String),
+
     #[error("{0}")]
     InvalidInput(String),
 
@@ -108,6 +124,10 @@ impl VaultError {
             Self::AlreadyExists { .. } => "already_exists",
             Self::NoSuchEntry => "no_such_entry",
             Self::InvalidMove => "invalid_move",
+            Self::WrongCode => "wrong_code",
+            Self::TooManyAttempts => "too_many_attempts",
+            Self::Offline => "offline",
+            Self::RemoteAuth(_) => "remote_auth",
             Self::InvalidInput(_) => "invalid_input",
             Self::Io(_) => "io",
         }

@@ -34,23 +34,68 @@ pub const IN_PLACE_README_NAME: &str = "HOW TO UNLOCK.txt";
 
 /// The launchers that make a locked folder self-contained on another machine.
 ///
-/// `Unlock.cmd` and `Lock.cmd` run the copied executable in console mode, which
-/// asks for the password and works on the folder they sit in. No installation,
-/// no window, and no WebView2 are needed on the other computer: console mode
-/// never starts the interface.
+/// The `.cmd` files run the Windows executable and the `.command` files run
+/// the macOS one, each in console mode, which asks for the password (or the
+/// authenticator code) and works on the folder it sits in. No installation and
+/// no window are needed on the other computer: console mode never starts the
+/// interface.
+///
+/// A program built for one operating system cannot run on the other, so each
+/// platform's VaultDrive copies *its own* binary into the folder under its own
+/// name, and every lock writes the launchers for both platforms. A folder
+/// locked only on Windows therefore carries `VaultDrive.exe` and an
+/// `Unlock.command` that explains the Mac program is not in it yet; lock it
+/// once from a Mac and it gains `VaultDrive-macos`, after which both work.
 pub const LAUNCHER_EXE_NAME: &str = "VaultDrive.exe";
+pub const LAUNCHER_MAC_NAME: &str = "VaultDrive-macos";
 pub const UNLOCK_CMD_NAME: &str = "Unlock.cmd";
 pub const LOCK_CMD_NAME: &str = "Lock.cmd";
+pub const UNLOCK_COMMAND_NAME: &str = "Unlock.command";
+pub const LOCK_COMMAND_NAME: &str = "Lock.command";
+
+/// The name this build of VaultDrive copies itself under.
+#[cfg(target_os = "windows")]
+pub const OWN_LAUNCHER_BINARY: &str = LAUNCHER_EXE_NAME;
+#[cfg(target_os = "macos")]
+pub const OWN_LAUNCHER_BINARY: &str = LAUNCHER_MAC_NAME;
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const OWN_LAUNCHER_BINARY: &str = "VaultDrive-linux";
 
 /// Every file VaultDrive itself puts in a locked folder. None of these is ever
 /// encrypted into the vault, and none is deleted when the plaintext is.
-pub const IN_PLACE_ARTIFACTS: [&str; 5] = [
+pub const IN_PLACE_ARTIFACTS: [&str; 10] = [
     IN_PLACE_VAULT_NAME,
     IN_PLACE_README_NAME,
     LAUNCHER_EXE_NAME,
+    LAUNCHER_MAC_NAME,
+    "VaultDrive-linux",
     UNLOCK_CMD_NAME,
     LOCK_CMD_NAME,
+    UNLOCK_COMMAND_NAME,
+    LOCK_COMMAND_NAME,
+    crate::remote::REMOTE_AUTH_FILE,
 ];
+
+/// How a folder expects to be unlocked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AuthMode {
+    /// A password typed by the user; fully offline.
+    Password,
+    /// A six-digit code checked by the authenticator server; needs internet.
+    Authenticator,
+}
+
+/// A folder is in authenticator mode exactly when it carries the sidecar.
+/// The sidecar is an artefact, so it survives unlock and re-lock and the mode
+/// is stable across cycles.
+pub fn folder_auth_mode(folder: &Path) -> AuthMode {
+    if crate::remote::RemoteAuth::load(folder).is_some() {
+        AuthMode::Authenticator
+    } else {
+        AuthMode::Password
+    }
+}
 
 /// Build one of the launchers.
 ///
@@ -78,6 +123,41 @@ fn launcher_text(flag: &str) -> String {
     out
 }
 
+/// Build one of the macOS launchers.
+///
+/// A `.command` file is what Finder opens in Terminal on a double-click. It
+/// `cd`s to its own folder so a drive mounted under a different name still
+/// works, sets the executable bit on the binary (a stick formatted on Windows
+/// carries no Unix permission bits), and runs console mode. Lines end in LF
+/// because bash treats a CR as part of the command.
+///
+/// Written on every platform, so a folder locked on Windows already tells a
+/// Mac user exactly what is missing instead of failing with a shell error.
+fn mac_launcher_text(flag: &str) -> String {
+    let lines = [
+        "#!/bin/bash".to_string(),
+        "# VaultDrive launcher. Double-click in Finder, or run from Terminal.".to_string(),
+        "cd \"$(dirname \"$0\")\" || exit 1".to_string(),
+        format!("if [ ! -f \"./{LAUNCHER_MAC_NAME}\" ]; then"),
+        "  echo \"The Mac version of VaultDrive is not in this folder.\"".to_string(),
+        "  echo \"This folder was locked on Windows. Either lock it once from a Mac,\"".to_string(),
+        "  echo \"which adds the Mac program, or open it with the VaultDrive application.\"".to_string(),
+        "  read -r -p \"Press Enter to close. \"".to_string(),
+        "  exit 1".to_string(),
+        "fi".to_string(),
+        format!("chmod +x \"./{LAUNCHER_MAC_NAME}\" 2>/dev/null"),
+        // Files copied from a USB stick carry no quarantine flag, but if this
+        // one somehow does, Gatekeeper would refuse it silently in a script.
+        format!("xattr -d com.apple.quarantine \"./{LAUNCHER_MAC_NAME}\" 2>/dev/null"),
+        format!("\"./{LAUNCHER_MAC_NAME}\" {flag} \"$(pwd)\""),
+        "echo".to_string(),
+        "read -r -p \"Press Enter to close. \"".to_string(),
+    ];
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
+}
+
 const IN_PLACE_README: &str = "\
 This folder is locked by VaultDrive.
 ====================================
@@ -87,8 +167,13 @@ XChaCha20-Poly1305 under a key derived from a password with Argon2id.
 
 To get the files back:
 
-  * If Unlock.cmd is in this folder, double-click it and type the password.
-    It works on any Windows computer, with nothing installed.
+  * On Windows: double-click Unlock.cmd and type the password. Works on any
+    Windows computer, with nothing installed.
+
+  * On a Mac: double-click Unlock.command. It needs the Mac version of
+    VaultDrive (VaultDrive-macos) to be in this folder too, which a Mac adds
+    the first time it locks the folder. Until then, open the folder with the
+    VaultDrive application instead.
 
   * Otherwise open VaultDrive, choose \"Open Vault\", switch to \"Locked
     folder\", pick this folder, and enter the password.
@@ -115,7 +200,9 @@ fn is_in_place_artifact(relative: &[String]) -> bool {
 /// has never seen VaultDrive. If the copy already exists (a re-lock), it is
 /// refreshed so the folder always carries the version that locked it.
 fn write_launchers(folder: &Path) -> Result<()> {
-    let exe_dst = folder.join(LAUNCHER_EXE_NAME);
+    // This build's own binary, under this platform's name. A Windows build
+    // cannot supply the Mac binary or vice versa; each adds its own.
+    let exe_dst = folder.join(OWN_LAUNCHER_BINARY);
     let exe_src = std::env::current_exe()
         .map_err(|_| VaultError::Io("Could not locate the VaultDrive executable.".into()))?;
     let same = std::fs::canonicalize(&exe_src).ok()
@@ -123,9 +210,28 @@ fn write_launchers(folder: &Path) -> Result<()> {
     if !same {
         std::fs::copy(&exe_src, &exe_dst).map_err(|e| VaultError::from_io(&e, &exe_dst))?;
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&exe_dst, std::fs::Permissions::from_mode(0o755));
+    }
+
+    // Launchers for both platforms, always, so the folder explains itself
+    // wherever it is plugged in.
     for (name, flag) in [(UNLOCK_CMD_NAME, "--unlock-folder"), (LOCK_CMD_NAME, "--lock-folder")] {
         let p = folder.join(name);
         std::fs::write(&p, launcher_text(flag)).map_err(|e| VaultError::from_io(&e, &p))?;
+    }
+    for (name, flag) in
+        [(UNLOCK_COMMAND_NAME, "--unlock-folder"), (LOCK_COMMAND_NAME, "--lock-folder")]
+    {
+        let p = folder.join(name);
+        std::fs::write(&p, mac_launcher_text(flag)).map_err(|e| VaultError::from_io(&e, &p))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755));
+        }
     }
     Ok(())
 }

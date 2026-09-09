@@ -93,7 +93,54 @@ fn run(folder: Option<&str>, mode: Mode) -> i32 {
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| folder.display().to_string());
 
+    // A folder carrying the authenticator sidecar unlocks with a six-digit
+    // code redeemed at the server, not with a password. Same engine underneath:
+    // the released key is used exactly where the password would be.
+    let remote = crate::remote::RemoteAuth::load(folder);
+
     let outcome = match mode {
+        Mode::Unlock if remote.is_some() => {
+            let auth = remote.expect("checked above");
+            println!("Unlocking \"{name}\" with your authenticator app.");
+            println!("This needs an internet connection.");
+            let code = match read_password("Authenticator code: ") {
+                Some(c) => c,
+                None => return EXIT_FAILED,
+            };
+            println!("Checking the code with the server.");
+            crate::remote::redeem(&auth.site, &auth.token, &code).and_then(|key| {
+                println!("Deriving the key. This takes a moment on purpose.");
+                unlock_folder_in_place(folder, &key, &Console::default()).map(|r| {
+                    println!();
+                    println!(
+                        "Done. {} file(s) and {} folder(s) are back in \"{name}\".",
+                        r.files, r.folders
+                    );
+                    println!("Run Lock.cmd when you want to lock it again.");
+                })
+            })
+        }
+        Mode::Lock if remote.is_some() => {
+            let auth = remote.expect("checked above");
+            println!("Locking \"{name}\" with your authenticator app.");
+            println!("This needs an internet connection.");
+            let code = match read_password("Authenticator code: ") {
+                Some(c) => c,
+                None => return EXIT_FAILED,
+            };
+            println!("Checking the code with the server.");
+            crate::remote::redeem(&auth.site, &auth.token, &code).and_then(|key| {
+                println!("Encrypting. The originals are deleted only after the vault is verified.");
+                lock_folder_in_place(folder, &key, KdfParams::interactive(), true, &Console::default())
+                    .map(|r| {
+                        println!();
+                        println!(
+                            "Done. {} file(s) and {} folder(s) are now encrypted inside \"{name}\".",
+                            r.files, r.folders
+                        );
+                    })
+            })
+        }
         Mode::Unlock => {
             println!("Unlocking \"{name}\".");
             let password = match read_password("Password: ") {
@@ -154,9 +201,9 @@ fn run(folder: Option<&str>, mode: Mode) -> i32 {
 
     match outcome {
         Ok(()) => EXIT_OK,
-        Err(VaultError::Authentication) => {
+        Err(e @ (VaultError::Authentication | VaultError::WrongCode)) => {
             eprintln!();
-            eprintln!("{}", VaultError::Authentication);
+            eprintln!("{e}");
             EXIT_FAILED
         }
         Err(e) => {
@@ -292,13 +339,26 @@ mod console {
 #[cfg(not(windows))]
 mod console {
     use std::io;
+    use std::process::Command;
 
+    /// A `.command` file already runs in Terminal, so there is nothing to
+    /// attach to on macOS or Linux.
     pub fn attach() {}
 
-    /// No echo control without a terminal library; say so rather than pretend.
+    /// Turn terminal echo off around `f` using `stty`, which every macOS and
+    /// Linux system ships. Going through the program rather than `termios`
+    /// avoids declaring a struct whose layout differs between the two.
+    ///
+    /// If stdin is not a terminal (a script piping the password in), `stty`
+    /// fails and echo is simply left alone; that is the redirected case, where
+    /// nothing is displayed anyway.
     pub fn with_echo_off<T>(f: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
-        eprintln!("(the password will be visible as you type on this platform)");
-        f()
+        let had_tty = Command::new("stty").arg("-echo").status().map(|s| s.success()).unwrap_or(false);
+        let out = f();
+        if had_tty {
+            let _ = Command::new("stty").arg("echo").status();
+        }
+        out
     }
 }
 

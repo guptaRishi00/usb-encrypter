@@ -13,6 +13,7 @@ import { asVaultError } from '../services/api';
 import { basename, bytes, quantity, shortPath } from '../services/format';
 import type {
   CreateReport,
+  Enrolment,
   LockReport,
   RemovalReport,
   ScanSummary,
@@ -30,6 +31,13 @@ type Phase = 'form' | 'working' | 'done';
  */
 type Mode = 'in-place' | 'file';
 
+/**
+ * How an in-place lock is protected. `password` is fully offline.
+ * `authenticator` scans a QR into an app and unlocks with a six-digit code
+ * verified by the user's own server, which means it needs the internet.
+ */
+type Protection = 'password' | 'authenticator';
+
 export function CreateVault({
   onOpenVault,
   onSettingsChanged,
@@ -42,6 +50,10 @@ export function CreateVault({
   // On by default: the point of locking a folder on a USB stick is opening it
   // on a computer that has never seen VaultDrive.
   const [launchers, setLaunchers] = useState(true);
+  const [protection, setProtection] = useState<Protection>('password');
+  const [enrolment, setEnrolment] = useState<Enrolment | null>(null);
+  const [enrolling, setEnrolling] = useState(false);
+  const [code, setCode] = useState('');
   const [source, setSource] = useState('');
   const [destination, setDestination] = useState('');
   const [vaultName, setVaultName] = useState('');
@@ -103,18 +115,48 @@ export function CreateVault({
   }
 
   const mismatch = confirm.length > 0 && password !== confirm;
-  const ready = Boolean(
-    source &&
-      password &&
-      password === confirm &&
-      !scanning &&
-      (mode === 'in-place' || destination),
-  );
+  const usingAuthenticator = mode === 'in-place' && protection === 'authenticator';
+  const ready = usingAuthenticator
+    ? Boolean(source && enrolment && /^\d{6}$/.test(code.trim()) && !scanning)
+    : Boolean(
+        source &&
+          password &&
+          password === confirm &&
+          !scanning &&
+          (mode === 'in-place' || destination),
+      );
+
+  async function startEnrolment() {
+    setEnrolling(true);
+    setError(null);
+    try {
+      setEnrolment(await api.beginAuthenticatorEnrolment(basename(source)));
+      setCode('');
+    } catch (e) {
+      setError(asVaultError(e));
+    } finally {
+      setEnrolling(false);
+    }
+  }
 
   async function encrypt() {
     setError(null);
     setPhase('working');
     try {
+      if (usingAuthenticator && enrolment) {
+        const { site, token, vaultId, name } = enrolment;
+        const locked = await api.lockFolderWithAuthenticator(
+          source,
+          { site, token, vaultId, name },
+          code.trim(),
+          launchers,
+        );
+        setCode('');
+        setEnrolment(null);
+        setLockReport(locked);
+        setPhase('done');
+        return;
+      }
       if (mode === 'in-place') {
         const locked = await api.lockFolder(source, password, launchers);
         setPassword('');
@@ -166,6 +208,8 @@ export function CreateVault({
     setLockReport(null);
     setRemoval(null);
     setError(null);
+    setEnrolment(null);
+    setCode('');
   }
 
   // ---------------------------------------------------------------- working
@@ -249,10 +293,18 @@ export function CreateVault({
             </Note>
           )}
 
-          <Note tone="accent" title="Remember the password.">
-            The only way back into this folder is the password you just set. There is no master
-            password and no backdoor.
-          </Note>
+          {usingAuthenticator ? (
+            <Note tone="accent" title="It opens with your authenticator app.">
+              Unlocking asks for the six-digit code and checks it with your server, so it needs an
+              internet connection. If the entry is deleted from the app and you have not kept the
+              manual key, the folder cannot be opened.
+            </Note>
+          ) : (
+            <Note tone="accent" title="Remember the password.">
+              The only way back into this folder is the password you just set. There is no master
+              password and no backdoor.
+            </Note>
+          )}
 
           <div className="row" style={{ marginTop: 6 }}>
             <button className="btn btn-primary" onClick={startOver}>
@@ -532,30 +584,132 @@ export function CreateVault({
             </label>
           )}
 
-          <PasswordField
-            label="Password"
-            value={password}
-            onChange={setPassword}
-            showStrength
-            placeholder="A passphrase of several words works well"
-          />
-          <PasswordField
-            label="Confirm password"
-            value={confirm}
-            onChange={setConfirm}
-            onEnter={() => ready && void encrypt()}
-          />
-          {mismatch && (
-            <div style={{ color: 'var(--danger)', fontSize: 12.5 }}>
-              The two passwords do not match.
+          {mode === 'in-place' && (
+            <>
+              <span className="field-label">Protect it with</span>
+              <label className={`choice ${protection === 'password' ? 'chosen' : ''}`}>
+                <input
+                  type="radio"
+                  name="protection"
+                  checked={protection === 'password'}
+                  onChange={() => setProtection('password')}
+                />
+                <span>
+                  <strong>A password</strong>
+                  <span className="choice-detail">
+                    Works anywhere, fully offline. The only thing that opens the folder is what you
+                    type.
+                  </span>
+                </span>
+              </label>
+              <label className={`choice ${protection === 'authenticator' ? 'chosen' : ''}`}>
+                <input
+                  type="radio"
+                  name="protection"
+                  checked={protection === 'authenticator'}
+                  onChange={() => setProtection('authenticator')}
+                />
+                <span>
+                  <strong>An authenticator app</strong>
+                  <span className="choice-detail">
+                    Scan a QR once; unlock with the six-digit code. The code is checked by your
+                    own server, so unlocking needs the internet, and the server holds the secret
+                    that makes the code mean anything.
+                  </span>
+                </span>
+              </label>
+            </>
+          )}
+
+          {usingAuthenticator ? (
+            <div className="stack">
+              {!enrolment ? (
+                <div className="row">
+                  <button className="btn" disabled={!source || enrolling} onClick={startEnrolment}>
+                    {enrolling ? <SpinnerIcon /> : null}
+                    {enrolling ? 'Asking the server…' : 'Get a QR code to scan'}
+                  </button>
+                  <span className="faint">Needs an internet connection.</span>
+                </div>
+              ) : (
+                <>
+                  <div className="row" style={{ gap: 18, alignItems: 'flex-start' }}>
+                    <div
+                      className="qr"
+                      aria-label="QR code for the authenticator app"
+                      dangerouslySetInnerHTML={{ __html: enrolment.qrSvg }}
+                    />
+                    <div className="stack-sm" style={{ minWidth: 0 }}>
+                      <div>
+                        Open Google Authenticator, Authy or Microsoft Authenticator and scan this.
+                        The entry will be called <strong>{enrolment.name}</strong>.
+                      </div>
+                      <div className="faint">Cannot scan? Enter this key by hand:</div>
+                      <div className="mono selectable" style={{ wordBreak: 'break-all' }}>
+                        {enrolment.manualKey}
+                      </div>
+                      <Note tone="warn">
+                        Anyone who scans this QR can open the folder. Once it is locked, this
+                        screen is gone: write the key down if you might need to re-enrol.
+                      </Note>
+                    </div>
+                  </div>
+                  <label className="field">
+                    <span className="field-label">Type the code the app shows now</span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      value={code}
+                      placeholder="123456"
+                      maxLength={6}
+                      style={{ maxWidth: 200, letterSpacing: '0.2em', fontFamily: 'var(--mono)' }}
+                      onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+                      onKeyDown={(e) => e.key === 'Enter' && ready && void encrypt()}
+                    />
+                  </label>
+                  <div className="faint">
+                    The code proves the scan worked before anything is encrypted under a key you
+                    could not otherwise get back.
+                  </div>
+                </>
+              )}
             </div>
+          ) : (
+            <>
+              <PasswordField
+                label="Password"
+                value={password}
+                onChange={setPassword}
+                showStrength
+                placeholder="A passphrase of several words works well"
+              />
+              <PasswordField
+                label="Confirm password"
+                value={confirm}
+                onChange={setConfirm}
+                onEnter={() => ready && void encrypt()}
+              />
+              {mismatch && (
+                <div style={{ color: 'var(--danger)', fontSize: 12.5 }}>
+                  The two passwords do not match.
+                </div>
+              )}
+            </>
           )}
         </div>
 
-        <Note tone="accent" title="Write your password down somewhere safe.">
-          If you forget it, the encrypted vault cannot be recovered by VaultDrive. There is no
-          master password and no backdoor.
-        </Note>
+        {usingAuthenticator ? (
+          <Note tone="accent" title="Folders locked this way need the internet to open.">
+            The six-digit code is only meaningful because your server checks it and limits
+            guesses. Without the server, or offline, the folder stays locked.
+          </Note>
+        ) : (
+          <Note tone="accent" title="Write your password down somewhere safe.">
+            If you forget it, the encrypted vault cannot be recovered by VaultDrive. There is no
+            master password and no backdoor.
+          </Note>
+        )}
 
         <div className="row">
           <button className="btn btn-primary btn-lg" disabled={!ready} onClick={encrypt}>

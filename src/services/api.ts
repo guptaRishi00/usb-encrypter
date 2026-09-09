@@ -14,11 +14,14 @@ import type {
   Breadcrumb,
   CreateReport,
   DriveInfo,
+  AuthMode,
+  Enrolment,
   Entry,
   FolderLockState,
   FolderRef,
   LockReport,
   ProgressEvent,
+  RemoteAuth,
   RemovalReport,
   ScanSummary,
   Settings,
@@ -81,6 +84,30 @@ export const lockFolder = (folder: string, password: string, launchers: boolean)
 /** Restore a folder that was locked in place. */
 export const unlockFolder = (folder: string, password: string) =>
   invoke<UnlockReport>('unlock_folder', { folder, password });
+
+// --- authenticator-server mode (needs internet) -----------------------------
+
+export const folderAuthMode = (path: string) => invoke<AuthMode>('folder_auth_mode', { path });
+
+/** Ask the server for a QR to scan. Nothing is written until the lock succeeds. */
+export const beginAuthenticatorEnrolment = (name: string) =>
+  invoke<Enrolment>('begin_authenticator_enrolment', { name });
+
+/** Prove the scan with one code, then lock the folder under the released key. */
+export const lockFolderWithAuthenticator = (
+  folder: string,
+  enrolment: RemoteAuth,
+  code: string,
+  launchers: boolean,
+) =>
+  invoke<LockReport>('lock_folder_with_authenticator', { folder, enrolment, code, launchers });
+
+export const unlockFolderWithAuthenticator = (folder: string, code: string) =>
+  invoke<UnlockReport>('unlock_folder_with_authenticator', { folder, code });
+
+/** Lock again, reusing the folder's existing authenticator entry. */
+export const relockFolderWithAuthenticator = (folder: string, code: string, launchers: boolean) =>
+  invoke<LockReport>('relock_folder_with_authenticator', { folder, code, launchers });
 export const removeSourceFolder = (path: string) =>
   invoke<RemovalReport>('remove_source_folder', { path });
 

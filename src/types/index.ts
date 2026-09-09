@@ -19,6 +19,10 @@ export type ErrorKind =
   | 'already_exists'
   | 'no_such_entry'
   | 'invalid_move'
+  | 'wrong_code'
+  | 'too_many_attempts'
+  | 'offline'
+  | 'remote_auth'
   | 'invalid_input'
   | 'io';
 
@@ -60,6 +64,24 @@ export interface CreateReport {
 }
 
 export type FolderLockState = 'locked' | 'unlocked' | 'empty' | 'unavailable';
+
+/** How a locked folder expects to be opened. */
+export type AuthMode = 'password' | 'authenticator';
+
+/** What the drive keeps for an authenticator-mode folder. Opaque without the server. */
+export interface RemoteAuth {
+  site: string;
+  token: string;
+  vaultId: string;
+  name: string;
+}
+
+/** A fresh enrolment from the server: show the QR once, then lock. */
+export interface Enrolment extends RemoteAuth {
+  otpauth: string;
+  manualKey: string;
+  qrSvg: string;
+}
 
 /** Result of locking a folder in place. */
 export interface LockReport {

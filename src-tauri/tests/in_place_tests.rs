@@ -42,7 +42,7 @@ fn launchers_make_the_folder_self_contained() {
     let fx = Fixture::new();
     let folder = sample(&fx);
     let before = tree(&folder);
-    lock_with_launchers(&folder, "pw").unwrap();
+    lock_with_launchers(&folder, "gravel-tunnel-9").unwrap();
 
     // The executable that did the locking travels with the folder.
     let exe = folder.join(LAUNCHER_EXE_NAME);
@@ -58,26 +58,67 @@ fn launchers_make_the_folder_self_contained() {
         assert!(text.contains(flag), "{name} must invoke {flag}");
         assert!(text.contains("%~dp0VaultDrive.exe"), "{name} must run the copied exe");
         assert!(text.contains("\r\n"), "{name} must use CRLF for cmd.exe");
-        assert!(!text.contains("pw"), "{name} must not contain the password");
+        assert!(!text.contains("gravel-tunnel-9"), "{name} must not contain the password");
     }
 
-    // Exactly five things remain, and none of them is plaintext from the user.
+    // The Mac launchers are written too, so a Mac user is told exactly what is
+    // missing rather than hitting a shell error.
+    use vaultdrive_lib::vault::{LAUNCHER_MAC_NAME, LOCK_COMMAND_NAME, UNLOCK_COMMAND_NAME};
+    for (name, flag) in
+        [(UNLOCK_COMMAND_NAME, "--unlock-folder"), (LOCK_COMMAND_NAME, "--lock-folder")]
+    {
+        let text = fs::read_to_string(folder.join(name)).unwrap();
+        assert!(text.starts_with("#!/bin/bash\n"), "{name} must be a bash script");
+        assert!(!text.contains('\r'), "{name} must use LF only; bash chokes on CR");
+        assert!(text.contains(flag), "{name} must invoke {flag}");
+        assert!(text.contains(LAUNCHER_MAC_NAME), "{name} must run the Mac binary");
+        assert!(text.contains("chmod +x"), "{name} must restore the executable bit");
+        assert!(text.contains("not in this folder"), "{name} must explain a missing Mac binary");
+        assert!(!text.contains("gravel-tunnel-9"), "{name} must not contain the password");
+    }
+    // This build is Windows, so it contributes only the Windows binary: the
+    // Mac one is deliberately absent, and the .command says so.
+    assert!(!folder.join(LAUNCHER_MAC_NAME).exists());
+
+    // Exactly seven things remain, and none of them is plaintext from the user.
     let left: Vec<String> = fs::read_dir(&folder)
         .unwrap()
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(left.len(), 5, "{left:?}");
+    assert_eq!(left.len(), 7, "{left:?}");
 
     // Unlocking restores the contents and KEEPS the launchers, so the folder
     // can be locked again on the other machine.
-    unlock_folder_in_place(&folder, b"pw", &NoProgress).unwrap();
+    unlock_folder_in_place(&folder, b"gravel-tunnel-9", &NoProgress).unwrap();
     let mut after = tree(&folder);
-    for a in [LAUNCHER_EXE_NAME, UNLOCK_CMD_NAME, LOCK_CMD_NAME] {
+    for a in [LAUNCHER_EXE_NAME, UNLOCK_CMD_NAME, LOCK_CMD_NAME, UNLOCK_COMMAND_NAME, LOCK_COMMAND_NAME] {
         assert!(folder.join(a).exists(), "{a} must survive an unlock");
         after.remove(a);
     }
     assert_eq!(after, before, "user contents changed across the cycle");
+}
+
+#[test]
+fn a_mac_binary_left_by_another_platform_is_treated_as_an_artefact() {
+    use vaultdrive_lib::vault::{LAUNCHER_MAC_NAME, OpenVault, IN_PLACE_VAULT_NAME};
+
+    // Stand in for a folder that a Mac has locked before: it carries the Mac
+    // binary. A Windows lock must neither encrypt it nor delete it.
+    let fx = Fixture::new();
+    let folder = sample(&fx);
+    let fake_mac = folder.join(LAUNCHER_MAC_NAME);
+    fs::write(&fake_mac, b"\xcf\xfa\xed\xfe not really a Mach-O").unwrap();
+
+    lock_with_launchers(&folder, "pw").unwrap();
+    assert!(fake_mac.exists(), "the Mac binary must survive a Windows lock");
+    let v = OpenVault::unlock(&folder.join(IN_PLACE_VAULT_NAME), b"pw").unwrap();
+    let names: Vec<String> = v.index().nodes.iter().map(|n| n.name.clone()).collect();
+    assert!(!names.iter().any(|n| n == LAUNCHER_MAC_NAME), "{names:?}");
+    drop(v);
+
+    unlock_folder_in_place(&folder, b"pw", &NoProgress).unwrap();
+    assert!(fake_mac.exists(), "the Mac binary must survive an unlock");
 }
 
 #[test]
@@ -94,7 +135,7 @@ fn launchers_are_never_encrypted_into_the_vault_on_a_relock() {
     let v = OpenVault::unlock(&folder.join(IN_PLACE_VAULT_NAME), b"pw").unwrap();
     let names: Vec<String> = v.index().nodes.iter().map(|n| n.name.clone()).collect();
     assert!(!names.iter().any(|n| n.eq_ignore_ascii_case(LAUNCHER_EXE_NAME)), "{names:?}");
-    assert!(!names.iter().any(|n| n.ends_with(".cmd")), "{names:?}");
+    assert!(!names.iter().any(|n| n.ends_with(".cmd") || n.ends_with(".command")), "{names:?}");
     assert_eq!(v.index().stats().0, 4, "only the four user files belong in the vault");
 }
 

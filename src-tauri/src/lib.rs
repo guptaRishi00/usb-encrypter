@@ -10,6 +10,7 @@ pub mod error;
 pub mod filesystem;
 pub mod logging;
 pub mod password;
+pub mod remote;
 pub mod settings;
 pub mod vault;
 
@@ -68,6 +69,11 @@ pub fn run() {
             commands::folder_lock_state,
             commands::lock_folder,
             commands::unlock_folder,
+            commands::folder_auth_mode,
+            commands::begin_authenticator_enrolment,
+            commands::lock_folder_with_authenticator,
+            commands::unlock_folder_with_authenticator,
+            commands::relock_folder_with_authenticator,
             commands::remove_source_folder,
             commands::unlock_vault,
             commands::lock_vault,

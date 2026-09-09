@@ -226,3 +226,74 @@ Nothing committed.
   verified with `git ls-remote`. Tagged `v0.1.0` and pushed the tag so a Release can be cut
   from it. Release assets (`release/*.zip`, `SHA256SUMS.txt`, `RELEASE_NOTES.md`) are ready
   locally; attaching them needs the GitHub UI or `gh` (not installed).
+
+## 2026-09-10 — /task: unlock with an authenticator code instead of a password
+
+- **Stopped to ask, per spec §26 ("if a feature cannot be implemented securely, do not fake
+  it").** A TOTP code is 6 digits (~20 bits) computed from a shared secret + time. Offline, the
+  verifying secret must live in or beside the vault, so whoever holds the drive holds the
+  secret and can compute the code; and a master key wrapped under a 6-digit code falls to a
+  million offline guesses in seconds. The sibling `usb-totp-vault` escapes this only by
+  putting the secret on a server (web/, needs internet) or in per-machine DPAPI/Keychain
+  (`vault.ps1`/`vault.py`, needs setup on every PC) — both contradict VaultDrive's offline,
+  any-machine promise. Laid out the honest options and asked before building any.
+- User re-asked for QR + authenticator code as the only unlock. Same math: the QR carries the
+  TOTP secret; offline the vault must hold it to verify, so the drive holds the secret, and a
+  6-digit space falls to offline guessing anyway. Only a server (their existing usbvault-web)
+  or a hardware key makes a code meaningful. Asked once more with two concrete builds.
+- **Built: authenticator mode via the user's own `usbvault-web`** (chosen over the offline
+  password+code speed bump). New `remote.rs`: `enrol` (POST /api/create → token + otpauth),
+  `redeem` (POST /api/unlock → 32-byte key, used verbatim as the vault password bytes so
+  the container format is unchanged), `qr_svg` (rendered in Rust — the web vault's qrcodejs
+  CDN would be blocked by Tauri's CSP). Sidecar `.vaultdrive.totp.json` {site, token,
+  vaultId, name}; `deny_unknown_fields` + a test so a future change cannot persist the key
+  beside the vault. Sidecar is an in-place artefact (kept on unlock, never encrypted).
+  Errors: 401→WrongCode, 429→TooManyAttempts, transport→Offline, other→RemoteAuth (capped).
+  Console mode prompts "Authenticator code:" when the sidecar exists, for unlock and re-lock.
+  UI: "Protect it with: password / authenticator app" on the lock page with the QR + manual
+  key + code proof; code entry on the unlock page. Deps added with permission: `ureq`,
+  `qrcode`. `cargo test` **221 passed**; `tsc` clean. Verified the stand-in TOTP (RFC 6238
+  vector) is accepted by the live server before touching the exe.
+- **Live end-to-end against usbvault-web.vercel.app with the rebuilt exe (6.2 MB; rustls adds
+  ~1.2 MB):** console-mode lock with a real code → folder holds exactly the six artefacts, no
+  plaintext, no manual key anywhere → `Unlock.cmd` with `000000` → "Incorrect code", vault
+  untouched → `Unlock.cmd` with a fresh code → all 3 files SHA-256 identical, vault gone,
+  sidecar + launchers kept → `Lock.cmd` with a fresh code → re-locked under the same
+  authenticator entry. Codes are single-use per vault (server, 120 s), so each step waited for
+  the next 30-s window. Stand-in TOTP passes the RFC 6238 vector and was accepted by the
+  server before any exe step. Not committed — the user did not ask for a commit this round.
+
+## 2026-09-10 — /task: "what about macOS? do something for it"
+
+- **Answer:** `Unlock.cmd` is a batch file running `VaultDrive.exe`; a Mac can run neither.
+  **No Mac binary can be built here** (Windows host, no Xcode) — and `cargo check
+  --target x86_64-apple-darwin` on the full crate dies in `objc2-exception-helper`'s C build
+  script (needs a Mac `cc`) before reaching our code. So: built the Mac side, proved the
+  platform-gated lines compile for the Apple target in an isolated crate, and labelled the
+  rest untested.
+- **Design:** every lock now writes launchers for **both** platforms (`Unlock.cmd`/`Lock.cmd`
+  + `Unlock.command`/`Lock.command`), and each platform's build copies **its own** binary
+  under its own name (`VaultDrive.exe` / `VaultDrive-macos`, via `OWN_LAUNCHER_BINARY`).
+  A folder locked only on Windows carries an `Unlock.command` that says the Mac program is
+  not in it yet; lock it once from a Mac and both launchers work. All ten names are
+  artefacts (never encrypted, never deleted) — tested with a fake `VaultDrive-macos` that
+  survives a Windows lock/unlock and never enters the vault.
+- **.command details:** `#!/bin/bash`, LF only (bash treats CR as part of a command),
+  `cd "$(dirname "$0")"`, `chmod +x` on the binary (a Windows-formatted stick carries no
+  Unix mode bits), best-effort `xattr -d com.apple.quarantine`, `read -p` to hold the
+  window. Password prompt on Unix now hides echo via `stty -echo`/`stty echo` (no termios
+  struct to get wrong across macOS/Linux; falls back gracefully when stdin is a pipe).
+- **Verified:** `cargo test` **222 passed, 0 failed** (Windows). Isolated darwin
+  `cargo check` of the exact `#[cfg(not(windows))]` console module and the unix branches of
+  `write_launchers`: **Finished, exit 0**. Two test-fixture slips fixed along the way
+  (`"pw"` is a substring of `$(pwd)`; earlier `"Secret"` tripped a forbidden-word scan).
+- **Unverified, stated in README:** Gatekeeper behaviour on an unsigned Mach-O launched
+  from a `.command`, exFAT mount exec permissions, and the whole flow on real macOS.
+
+## 2026-09-10 — /task: push the code
+
+- Committed the work since `v0.1.0` (authenticator mode, cross-platform launchers, console-mode
+  fixes, pluralisation, docs) as one commit — the features share `cli.rs`, `vault/mod.rs` and
+  the in-place tests, so a per-feature split would not have been honest — and pushed `main`.
+  Not tagged: the user asked to push, not to cut a release; `release/` still holds the 0.1.0
+  zip, which predates every change in this commit.

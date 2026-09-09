@@ -47,6 +47,10 @@ There are two ways to protect a folder, and the app asks which you want.
 - **Create a separate `.vault` file.** The original folder is left completely
   alone and a portable container is written wherever you choose. This is the one
   to use for putting a copy on a USB drive.
+- **Unlock with an authenticator app instead of a password** (optional, per
+  folder). Scan a QR once; unlock anywhere with the six-digit code. This mode
+  needs the internet, because the code is checked by a server you run. See
+  [Authenticator mode](#authenticator-mode).
 
 Both use the same format and the same cryptography. The only difference is where
 the container lands and whether the originals are removed.
@@ -130,7 +134,7 @@ Windows is the priority, because the portable USB workflow is the point.
 | | Status |
 |---|---|
 | Windows 10 / 11 (x64) | Built and tested |
-| macOS | Should build; **not tested — no machine available** |
+| macOS | Should build; **not tested — no machine available**. The `.command` launchers, the `stty`-based hidden password prompt and the Mac binary copy are written but have never been run on a Mac |
 | Linux | Should build; **not tested — no machine available** |
 
 Everything platform-specific is behind `src-tauri/src/filesystem/`: drive
@@ -197,8 +201,13 @@ plain note explaining what happened. The note contains no secret. Nothing else
 of yours survives in the folder.
 
 **Self-contained folders.** With "Make it open on other computers" ticked (the
-default), the lock also drops a copy of `VaultDrive.exe` plus `Unlock.cmd` and
-`Lock.cmd` into the folder. The `.cmd` files run the exe in **console mode**
+default), the lock also drops a copy of this platform's VaultDrive binary plus
+launchers for both platforms into the folder: `Unlock.cmd` / `Lock.cmd` for
+Windows and `Unlock.command` / `Lock.command` for macOS. A Windows build cannot
+supply the Mac program or vice versa, so each platform adds its own the first
+time it locks the folder (`VaultDrive.exe`, `VaultDrive-macos`). A folder locked
+only on Windows therefore opens on a Mac only through the VaultDrive
+application, and `Unlock.command` says exactly that instead of failing. The `.cmd` files run the exe in **console mode**
 (`--unlock-folder` / `--lock-folder`), which attaches to the console that
 launched it when it was given no standard input (a double-click), reads from a
 redirected pipe or file otherwise (a script), asks for the password without
@@ -272,6 +281,39 @@ nothing to sanitise.
 
 ---
 
+## Authenticator mode
+
+An authenticator code is six digits computed from a shared secret and the
+clock. For a vault on a USB stick to check codes by itself, that secret would
+have to be on the stick, and whoever holds the stick could then compute every
+code; and a key protected by six digits is a million guesses, which an offline
+attacker finishes in seconds. So codes only mean something when a server that
+the drive does not carry does the checking and counts the attempts.
+
+VaultDrive therefore uses the user's own `usbvault-web` deployment
+(`https://usbvault-web.vercel.app` by default):
+
+1. **Lock.** VaultDrive asks the server for a fresh authenticator secret and a
+   random 32-byte unlock key, sealed into a *token* under the server's master
+   secret. The QR is rendered locally. You type one valid code, which VaultDrive
+   redeems with the server to prove the scan worked, and the released key is
+   used exactly where a password would be. The folder gets a
+   `.vaultdrive.totp.json` sidecar holding the site and the token: nothing that
+   works without the server.
+2. **Unlock.** VaultDrive, or `Unlock.cmd`, asks for the code, sends token plus
+   code, and the server releases the key after checking it: one step of clock
+   drift either way, each code single-use for two minutes, five wrong codes per
+   five minutes per authenticator secret.
+3. **Re-lock** reuses the token, so the same entry in the app keeps working.
+
+**What this costs, stated plainly.** These folders need an internet connection
+to open, and they trust that server: whoever controls its master secret can
+decrypt any token and so any such folder. Password-mode folders are untouched
+by all of this and remain fully offline. The vault container is byte-for-byte
+the same format; only the source of the key differs.
+
+---
+
 ## Threat model
 
 **VaultDrive protects against**
@@ -285,6 +327,10 @@ nothing to sanitise.
   full Argon2id evaluation at 128 MiB.
 
 **VaultDrive does not protect against**
+
+- **The authenticator server, for folders locked in authenticator mode.** Its
+  operator holds the master secret that seals every token. Password-mode folders
+  do not have this exposure.
 
 - **A compromised computer.** Malware, a keylogger, or another administrator on
   the machine can read the password as you type it and the plaintext while the
@@ -304,7 +350,7 @@ nothing to sanitise.
 ## Testing
 
 ```bash
-npm run test:rust      # 214 tests
+npm run test:rust      # 221 tests
 npm test               # typecheck + the above
 ```
 
@@ -312,7 +358,7 @@ The suite is organised the way the requirements are:
 
 | Suite | Covers |
 |---|---|
-| `src-tauri/src/**` unit tests (114) | Header encoding, superblock bounds, AEAD round trips and every-bit tampering, chunk reordering, index structure and name validation, atomic replace, source scanning, drive enumeration, secure deletion, settings, password scoring |
+| `src-tauri/src/**` unit tests (121) | Header encoding, superblock bounds, AEAD round trips and every-bit tampering, chunk reordering, index structure and name validation, atomic replace, source scanning, drive enumeration, secure deletion, settings, password scoring |
 | `tests/password_tests.rs` (10) | Correct and incorrect passwords, empty and 5 KB passwords, Unicode, and that a near-miss and a wild guess fail identically |
 | `tests/encryption_tests.rs` (15) | Round trips for nested trees, empty files, empty folders, all 256 byte values, files spanning several chunks, Unicode names, 1000-file vaults, timestamp preservation through export, and opening a vault after moving it |
 | `tests/integrity_tests.rs` (16) | Bit flips in the header, keywrap, superblocks and data; truncation at ~150 cut points; appended junk; wrong format version; unknown cipher; a hostile Argon2 parameter; splicing data between two vaults |
@@ -410,19 +456,23 @@ vault was made on.
    a file whose recorded size is a lie. Nothing is deleted; you try again.
 11. **Compaction rewrites the whole container** and needs room for a second copy
     on the same volume.
-12. **Locking in place needs room for both copies at once.** The container is
+12. **Authenticator-mode folders need the internet and trust the server.** The
+    six-digit code is checked by your `usbvault-web` deployment; offline, or if
+    that deployment is gone, such a folder cannot be opened. The server's
+    operator can decrypt any token it sealed.
+13. **Locking in place needs room for both copies at once.** The container is
     written beside the plaintext it is encrypting, so the volume briefly holds
     both. VaultDrive checks free space first and refuses rather than running out
     with the originals half-deleted. Unlocking has the same requirement in
     reverse.
-13. **A file another program holds open cannot be deleted** during an in-place
+14. **A file another program holds open cannot be deleted** during an in-place
     lock. It is still encrypted into the container, but the plaintext copy stays
     on disk, and it is reported by name so you can close that program and lock
     again.
-14. **macOS and Linux are untested.** The code is written for them and nothing in
+15. **macOS and Linux are untested.** The code is written for them and nothing in
     it is Windows-only, but no one has run it there.
-15. **One vault open at a time.** The session holds a single unlocked vault.
-16. **No key file or hardware token support.** Password only.
+16. **One vault open at a time.** The session holds a single unlocked vault.
+17. **No key file or hardware token support.** Password only.
 
 ---
 

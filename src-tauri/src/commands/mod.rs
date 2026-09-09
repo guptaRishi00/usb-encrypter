@@ -357,6 +357,116 @@ pub async fn lock_folder(
     .await
 }
 
+// ---------------------------------------------------------------------------
+// Commands: authenticator-server mode
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn folder_auth_mode(path: String) -> vault::AuthMode {
+    vault::folder_auth_mode(Path::new(&path))
+}
+
+/// Ask the server for a new authenticator secret and show it as a QR.
+/// Nothing is written until `lock_folder_with_authenticator` succeeds.
+#[tauri::command]
+pub async fn begin_authenticator_enrolment(name: String) -> Result<crate::remote::Enrolment> {
+    blocking(move || crate::remote::enrol(crate::remote::DEFAULT_SITE, &name)).await
+}
+
+/// Lock a folder so that it unlocks with a code from the authenticator app.
+///
+/// The code is redeemed with the server *first*, which proves the QR was
+/// scanned correctly before anything is encrypted under a key the user could
+/// otherwise never reproduce. The sidecar is written before the lock so the
+/// artefact exclusion protects it during the plaintext removal.
+#[tauri::command]
+pub async fn lock_folder_with_authenticator(
+    app: AppHandle,
+    state: St<'_>,
+    folder: String,
+    enrolment: crate::remote::RemoteAuth,
+    code: String,
+    launchers: bool,
+) -> Result<vault::LockReport> {
+    let st = state.inner().clone();
+    st.session.cancel_flag().begin();
+
+    blocking(move || {
+        let key = crate::remote::redeem(&enrolment.site, &enrolment.token, &code)?;
+        let folder = Path::new(&folder);
+        enrolment.save(folder)?;
+        let progress = WindowProgress::new(app, st.clone());
+        let result = vault::lock_folder_in_place(
+            folder,
+            &key,
+            crate::crypto::KdfParams::interactive(),
+            launchers,
+            &progress,
+        );
+        if result.is_err() {
+            // A folder that is not locked must not look like an authenticator
+            // folder, or the next lock would try to reuse a token for nothing.
+            let _ = std::fs::remove_file(folder.join(crate::remote::REMOTE_AUTH_FILE));
+        }
+        result
+    })
+    .await
+}
+
+/// Restore a folder locked in authenticator mode.
+#[tauri::command]
+pub async fn unlock_folder_with_authenticator(
+    app: AppHandle,
+    state: St<'_>,
+    folder: String,
+    code: String,
+) -> Result<vault::UnlockReport> {
+    let st = state.inner().clone();
+    st.session.cancel_flag().begin();
+
+    blocking(move || {
+        let folder = Path::new(&folder);
+        let auth = crate::remote::RemoteAuth::load(folder).ok_or_else(|| {
+            VaultError::InvalidInput("That folder is not set up for an authenticator.".into())
+        })?;
+        let key = crate::remote::redeem(&auth.site, &auth.token, &code)?;
+        let progress = WindowProgress::new(app, st.clone());
+        vault::unlock_folder_in_place(folder, &key, &progress)
+    })
+    .await
+}
+
+/// Re-lock a folder that was set up for an authenticator, reusing its token so
+/// the same entry in the app keeps working.
+#[tauri::command]
+pub async fn relock_folder_with_authenticator(
+    app: AppHandle,
+    state: St<'_>,
+    folder: String,
+    code: String,
+    launchers: bool,
+) -> Result<vault::LockReport> {
+    let st = state.inner().clone();
+    st.session.cancel_flag().begin();
+
+    blocking(move || {
+        let folder = Path::new(&folder);
+        let auth = crate::remote::RemoteAuth::load(folder).ok_or_else(|| {
+            VaultError::InvalidInput("That folder is not set up for an authenticator.".into())
+        })?;
+        let key = crate::remote::redeem(&auth.site, &auth.token, &code)?;
+        let progress = WindowProgress::new(app, st.clone());
+        vault::lock_folder_in_place(
+            folder,
+            &key,
+            crate::crypto::KdfParams::interactive(),
+            launchers,
+            &progress,
+        )
+    })
+    .await
+}
+
 /// Restore a folder that was locked in place.
 #[tauri::command]
 pub async fn unlock_folder(
