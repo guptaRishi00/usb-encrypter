@@ -55,6 +55,11 @@ jobs:
 
       - run: npm ci
 
+      # `tauri::generate_context!` refuses to compile unless `frontendDist`
+      # (../dist) exists, so the frontend must be built before the crate can be
+      # tested. tauri-action builds it again later; that takes seconds.
+      - run: npm run build:vite
+
       # Run the same suite the README documents before producing anything.
       - run: cargo test --manifest-path src-tauri/Cargo.toml
         if: matrix.label == 'windows'

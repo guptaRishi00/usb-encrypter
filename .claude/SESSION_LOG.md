@@ -352,3 +352,12 @@ Nothing committed.
 - Nowhere yet: the workflow had never run. Bumped 0.1.0 → 0.2.0 (package.json, lock,
   tauri.conf.json, Cargo.toml/lock), committed, tagged `v0.2.0`, pushed both. The dmg is
   produced by the macOS runner and attached to the draft release for that tag.
+
+## 2026-09-10 — /task: Actions build failed (frontendDist missing)
+
+- `cargo test` ran before any frontend build, and `tauri::generate_context!` panics when
+  `../dist` is absent. Locally a stale `dist/` masked it. Added `npm run build:vite` before the
+  test step in build.yml. Reproduced locally: with `dist` moved away `cargo check` gives the
+  same message; after `build:vite` it passes. Not committed (not asked); the `v0.2.0` tag still
+  points at the broken commit and must be moved once this lands.
+- Pushed on request: commit + `v0.2.0` tag moved onto it.
