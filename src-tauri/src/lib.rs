@@ -17,8 +17,9 @@ pub mod vault;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
+use crate::commands::popup::{launch_target, Popup};
 use crate::commands::AppState;
 
 /// How often the auto-lock thread wakes up.
@@ -29,10 +30,25 @@ const AUTO_LOCK_TICK: Duration = Duration::from_secs(15);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let args: Vec<String> = std::env::args().collect();
+    let exe = std::env::current_exe().ok();
+    let popup = launch_target(&args, exe.as_deref()).map(|t| Arc::new(Popup::new(t)));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
+        .on_window_event(|window, event| {
+            // In a popup, closing an open folder locks it first; the relock
+            // thread exits the app once that is done.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if let Some(p) = window.try_state::<Arc<Popup>>() {
+                    if p.on_close_requested() {
+                        api.prevent_close();
+                    }
+                }
+            }
+        })
+        .setup(move |app| {
             let config_dir = app
                 .path()
                 .app_config_dir()
@@ -41,6 +57,28 @@ pub fn run() {
 
             let state = Arc::new(AppState::new(config_dir));
             app.manage(state.clone());
+
+            // The window is created here rather than from the config, because
+            // a double-click on the program inside a locked folder gets a small
+            // fixed-size popup instead of the full application.
+            match popup {
+                Some(p) => {
+                    WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+                        .title(format!("VaultDrive: {}", p.folder_name()))
+                        .inner_size(440.0, 480.0)
+                        .resizable(false)
+                        .maximizable(false)
+                        .center()
+                        .build()?;
+                    app.manage(p);
+                }
+                None => {
+                    let config = app.config().app.windows.first().cloned().ok_or(
+                        "tauri.conf.json must define the main window",
+                    )?;
+                    WebviewWindowBuilder::from_config(app.handle(), &config)?.build()?;
+                }
+            }
 
             // Auto-lock is enforced here rather than in JavaScript. A stopped
             // renderer, a paused tab or an open devtools console cannot keep a
@@ -91,6 +129,10 @@ pub fn run() {
             commands::export_entry,
             commands::verify_vault,
             commands::compact_vault,
+            commands::popup::popup_info,
+            commands::popup::popup_unlock,
+            commands::popup::popup_lock,
+            commands::popup::popup_lock_now,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VaultDrive");

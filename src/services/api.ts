@@ -19,7 +19,9 @@ import type {
   Entry,
   FolderLockState,
   FolderRef,
+  LockFailure,
   LockReport,
+  PopupInfo,
   ProgressEvent,
   RemoteAuth,
   RemovalReport,
@@ -164,3 +166,18 @@ export const onProgress = (handler: (p: ProgressEvent) => void): Promise<Unliste
 
 export const onAutoLocked = (handler: () => void): Promise<UnlistenFn> =>
   listen('vault:auto-locked', () => handler());
+
+// --- popup window (double-click on the program inside a locked folder) ------
+
+/** `null` in the normal window. */
+export const popupInfo = () => invoke<PopupInfo | null>('popup_info');
+export const popupUnlock = (secret: string) => invoke<UnlockReport>('popup_unlock', { secret });
+export const popupLock = (secret: string) => invoke<LockReport>('popup_lock', { secret });
+export const popupLockNow = () => invoke<void>('popup_lock_now');
+
+export const onPopupLocking = (handler: () => void): Promise<UnlistenFn> =>
+  listen('popup:locking', () => handler());
+export const onPopupLocked = (handler: (r: LockReport) => void): Promise<UnlistenFn> =>
+  listen<LockReport>('popup:locked', (e) => handler(e.payload));
+export const onPopupLockFailed = (handler: (f: LockFailure) => void): Promise<UnlistenFn> =>
+  listen<LockFailure>('popup:lock-failed', (e) => handler(e.payload));

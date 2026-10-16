@@ -122,9 +122,14 @@ Mac needs the Xcode command-line tools and Rust, nothing else.
 
 A folder locked with "Make it open on other computers" carries its own copy of
 VaultDrive and a launcher for each platform. On Windows, double-click
-`Unlock.cmd`. On a Mac, double-click `Unlock.command`, which needs the Mac
-program (`VaultDrive-macos`) to have been added by locking the folder once from
-a Mac; until then it says so and points you at the application.
+`VaultDrive.exe` inside the folder: a small window asks for the password or the
+authenticator code, opens the folder, and locks it again a minute later or as
+soon as the window is closed. No console appears. `Unlock.cmd` does the same in
+a console window, for a machine where the small window cannot start. On a Mac,
+double-click `Unlock.command`, which opens the same small window (Terminal stays
+open behind it) and needs the Mac program (`VaultDrive-macos`) to have been
+added by locking the folder once from a Mac; until then it says so and points
+you at the application.
 
 ---
 
@@ -259,13 +264,33 @@ again after 60 seconds**, or as soon as you press Enter, reusing the key that
 unlocked it so nothing is asked twice. Two limits, stated plainly: closing the
 window instead kills the countdown and leaves the folder unlocked, and a file
 still open in another program cannot be deleted at relock time, so the launcher
-names it and offers a retry. `VaultDrive.exe --unlock-folder <dir>
+names it and offers a retry. The popup window below has neither limit on
+closing. `VaultDrive.exe --unlock-folder <dir>
 --relock-after 0` disables the countdown; a script piping the password in never
 gets one, because a script that wanted the folder locked again would say so. The launchers are never encrypted into the vault
 and never deleted with the plaintext, on a first lock or a re-lock. There is no
 way to do this "without any program": Argon2id and XChaCha20-Poly1305 are not
 available to a bare `.cmd` or to PowerShell, so the folder has to carry the
 engine.
+
+**The popup window.** Double-clicking the `VaultDrive.exe` that sits inside a
+locked folder opens a small fixed-size window for that folder instead of the
+full application; the program recognises the launch because it has no arguments
+and sits beside `.vaultdrive.vault` or `Lock.cmd`, which the installed copy never
+does. `--popup <folder> [--relock-after SECONDS]` asks for it explicitly, and is
+what `Unlock.command` / `Lock.command` run on a Mac, falling back to console
+mode if the window cannot start. A locked folder gets a single field, for the
+password or the six-digit code depending on the folder; an unlocked one gets a
+form to lock it again. The countdown and the relock are owned by Rust, not the
+web view: after the unlock, a thread holds the key and waits for the deadline
+or "Lock now". **Closing the window never leaves the folder open**: a close
+during the unlock, the countdown or the relock is held back until the folder is
+locked again, and only then does the app exit. If the relock fails, for
+instance because a file is open in another program, the window says which
+files are still readable and offers to try again; closing at that point does
+leave it unlocked, because you have been told. Killing the process from Task
+Manager is the one way to skip the relock. The popup needs WebView2, like the
+full application.
 
 **Deletion leaves dead space.** Removing an entry unlinks it from the index; the
 ciphertext stays in the container as unreachable bytes until you press Compact,
@@ -447,9 +472,10 @@ vault was made on.
 
 ### Portability limits, stated plainly
 
-- **A self-unlocking folder does not need WebView2**, because `Unlock.cmd` runs
-  console mode, which never opens a window. The limits below apply to the full
-  application only.
+- **A self-unlocking folder does not need WebView2** if it is opened with
+  `Unlock.cmd`, which runs console mode and never opens a window. The popup
+  (double-clicking `VaultDrive.exe` in the folder) does need it, like the full
+  application.
 - **WebView2 is required.** VaultDrive draws its interface in the system web
   view. Windows 11 and current Windows 10 ship WebView2, but a machine without it
   will show an error rather than a window, and installing it needs administrator

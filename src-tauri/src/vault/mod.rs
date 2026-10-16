@@ -128,8 +128,9 @@ fn launcher_text(flag: &str) -> String {
 /// A `.command` file is what Finder opens in Terminal on a double-click. It
 /// `cd`s to its own folder so a drive mounted under a different name still
 /// works, sets the executable bit on the binary (a stick formatted on Windows
-/// carries no Unix permission bits), and runs console mode. Lines end in LF
-/// because bash treats a CR as part of the command.
+/// carries no Unix permission bits), and opens the popup window. If the window
+/// cannot start, it falls back to console mode in the same Terminal. Lines end
+/// in LF because bash treats a CR as part of the command.
 ///
 /// Written on every platform, so a folder locked on Windows already tells a
 /// Mac user exactly what is missing instead of failing with a shell error.
@@ -149,6 +150,7 @@ fn mac_launcher_text(flag: &str) -> String {
         // Files copied from a USB stick carry no quarantine flag, but if this
         // one somehow does, Gatekeeper would refuse it silently in a script.
         format!("xattr -d com.apple.quarantine \"./{LAUNCHER_MAC_NAME}\" 2>/dev/null"),
+        format!("\"./{LAUNCHER_MAC_NAME}\" --popup \"$(pwd)\" && exit 0"),
         format!("\"./{LAUNCHER_MAC_NAME}\" {flag} \"$(pwd)\""),
         "echo".to_string(),
         "read -r -p \"Press Enter to close. \"".to_string(),
@@ -167,8 +169,11 @@ XChaCha20-Poly1305 under a key derived from a password with Argon2id.
 
 To get the files back:
 
-  * On Windows: double-click Unlock.cmd and type the password. Works on any
-    Windows computer, with nothing installed.
+  * On Windows: double-click VaultDrive.exe. A small window asks for the
+    password or the authenticator code, opens the folder, and locks it again
+    after a minute (or when you close the window). Works on any Windows 10 or
+    11 computer, with nothing installed. Unlock.cmd does the same in a
+    console window, if the small window ever cannot start.
 
   * On a Mac: double-click Unlock.command. It needs the Mac version of
     VaultDrive (VaultDrive-macos) to be in this folder too, which a Mac adds

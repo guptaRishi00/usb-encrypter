@@ -388,3 +388,22 @@ Nothing committed.
   machine (C:/D: NTFS), so the live refusal is not exercised end to end; the decision
   logic is unit-tested and the fs name comes from sysinfo.
 - Pushed on request as 0.2.1: commit + tag `v0.2.1` (new tag, so no force needed).
+
+## 2026-10-17 — /task: popup instead of a console, release 0.3.0
+
+- New `commands/popup.rs`: `launch_target` (no args + exe beside `.vaultdrive.vault` or
+  `Lock.cmd`, or `--popup <dir> [--relock-after N]`), `Popup` state machine
+  (Idle/Busy/Holding/Locking/Failed), commands `popup_info/unlock/lock/lock_now`.
+  Rust owns the 60 s countdown: a thread holds the key, relocks on deadline or signal.
+  CloseRequested is prevented in Busy/Holding/Locking and the app exits after the relock.
+  Window is built in setup (`"create": false` in tauri.conf.json); `main.tsx` asks
+  `popup_info` first and renders `pages/FolderPopup.tsx`. Mac `.command` now runs
+  `--popup`, falling back to console mode. In-folder README + project README updated.
+- Verified live (release exe launched with no args, i.e. a double-click): no console;
+  wrong password refused; unlock -> files SHA-256 identical; 60 s auto-relock; Close;
+  X while open -> relock then exit; X mid-unlock -> log shows relock 2 ms after unlock
+  finished, then exit (first version quit mid-unlock: fixed with the Busy phase);
+  lock form on an unlocked folder; authenticator folder enrolled on the live server,
+  unlocked in the popup with a fresh TOTP code, Lock now reused the held key.
+  cargo test 234 passed, tsc clean. Mac path untested (no Mac).
+- Committed and pushed as 0.3.0 with tag `v0.3.0` on request.

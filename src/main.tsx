@@ -2,6 +2,8 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import App from './App';
+import { FolderPopup } from './pages/FolderPopup';
+import { popupInfo } from './services/api';
 import './styles/global.css';
 
 const root = document.getElementById('root');
@@ -16,8 +18,13 @@ document.addEventListener('contextmenu', (e) => {
   e.preventDefault();
 });
 
-createRoot(root).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+// The program inside a locked folder opens a small popup for that folder
+// instead of the full application. Ask before the first render, so neither
+// flashes up in place of the other.
+void popupInfo()
+  .catch(() => null)
+  .then((info) => {
+    createRoot(root).render(
+      <StrictMode>{info ? <FolderPopup info={info} /> : <App />}</StrictMode>,
+    );
+  });

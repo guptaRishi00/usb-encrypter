@@ -100,6 +100,22 @@ export interface LockReport {
 }
 
 /** Result of restoring a folder that was locked in place. */
+/** The folder a popup window was opened for. */
+export interface PopupInfo {
+  folder: string;
+  name: string;
+  state: FolderLockState;
+  authMode: AuthMode;
+  /** Seconds the folder stays open; 0 means until "Lock now". */
+  relockAfter: number;
+}
+
+/** Sent when the automatic relock in a popup does not complete. */
+export interface LockFailure {
+  message: string;
+  stillReadable: string[];
+}
+
 export interface UnlockReport {
   folder: string;
   files: number;

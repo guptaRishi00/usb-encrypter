@@ -18,6 +18,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use zeroize::Zeroizing;
 
+pub mod popup;
+
 use crate::error::{Result, VaultError};
 use crate::filesystem::{self, DriveInfo};
 use crate::password::{self, Strength};

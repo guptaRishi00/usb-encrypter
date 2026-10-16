@@ -65,7 +65,7 @@ enum Mode {
 pub const DEFAULT_RELOCK_AFTER_SECS: u64 = 60;
 
 /// Parse `--relock-after <seconds>` anywhere after the folder argument.
-fn relock_after_arg(args: &[String]) -> std::result::Result<u64, String> {
+pub(crate) fn relock_after_arg(args: &[String]) -> std::result::Result<u64, String> {
     let mut it = args.iter().skip(3);
     while let Some(a) = it.next() {
         if a == "--relock-after" {
