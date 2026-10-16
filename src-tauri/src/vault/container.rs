@@ -716,14 +716,18 @@ impl OpenVault {
         let node = self.index.get(id)?.clone();
         let ids = if node.is_dir() { self.index.subtree(id) } else { vec![id] };
 
-        let total_bytes: u64 = self
-            .index
-            .nodes
-            .iter()
-            .filter(|n| ids.contains(&n.id) && !n.is_dir())
-            .map(|n| n.size)
-            .sum();
+        let sizes = || {
+            self.index
+                .nodes
+                .iter()
+                .filter(|n| ids.contains(&n.id) && !n.is_dir())
+                .map(|n| n.size)
+        };
+        let total_bytes: u64 = sizes().sum();
         crate::filesystem::ensure_space(dest_dir, total_bytes)?;
+        // Files come out one by one, so only the largest has to fit the
+        // destination's per-file limit.
+        crate::filesystem::ensure_file_fits(dest_dir, sizes().max().unwrap_or(0))?;
 
         let root_out = dest_dir.join(validate_name(&node.name)?);
 

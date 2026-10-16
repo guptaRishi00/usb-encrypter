@@ -357,8 +357,10 @@ pub fn lock_folder_in_place(
 
     // The vault is written beside the plaintext it is encrypting, so the volume
     // briefly holds both copies. Check for that up front rather than running
-    // out of room with the originals half-deleted.
+    // out of room with the originals half-deleted. The vault is also one file,
+    // which a FAT32 stick caps at 4 GiB however much free space it has.
     crate::filesystem::ensure_space(folder, total_bytes)?;
+    crate::filesystem::ensure_file_fits(folder, total_bytes)?;
 
     tracing::info!(files, folders, total_bytes, "locking folder in place");
 
@@ -555,6 +557,7 @@ pub fn create_vault_from_folder(
     // plus the index), so the plaintext total plus the module's own margin is a
     // safe estimate.
     crate::filesystem::ensure_space(dest_dir, summary.total_bytes)?;
+    crate::filesystem::ensure_file_fits(dest_dir, summary.total_bytes)?;
 
     let ScanSummary { files, folders, total_bytes, skipped } = summary;
     tracing::info!(files, folders, total_bytes, "creating vault");

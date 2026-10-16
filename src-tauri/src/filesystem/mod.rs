@@ -11,5 +11,7 @@ pub mod drives;
 pub mod scan;
 pub mod secure_delete;
 
-pub use drives::{available_space_for, ensure_space, list_drives, DriveInfo};
+pub use drives::{
+    available_space_for, ensure_file_fits, ensure_space, file_system_for, list_drives, DriveInfo,
+};
 pub use scan::{scan_folder, ScanSummary, ScannedEntry};

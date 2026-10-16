@@ -521,6 +521,11 @@ vault was made on.
 17. **No key file or hardware token support.** Password only.
 
 ---
+18. **FAT32 drives cannot hold a vault over 4 GB.** That is the filesystem's
+   per-file cap, and most USB sticks ship formatted FAT32. VaultDrive checks
+   before writing and tells you to reformat as exFAT or NTFS (or pick a smaller
+   folder) instead of failing part-way with a "disk full" error. exFAT and NTFS
+   have no such cap.
 
 ## Project structure
 

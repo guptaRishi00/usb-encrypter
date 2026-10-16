@@ -57,6 +57,9 @@ pub enum VaultError {
     #[error("Not enough free space. {needed_mb} MB is needed and {available_mb} MB is free.")]
     InsufficientSpace { needed_mb: u64, available_mb: u64 },
 
+    #[error("A {file_system} drive cannot hold a single file larger than 4 GB, and this one would be {size_mb} MB. Format the drive as exFAT or NTFS, or lock a smaller folder.")]
+    FileTooLargeForVolume { file_system: String, size_mb: u64 },
+
     #[error("'{name}' changed while the vault was being written. Nothing was deleted; please try again.")]
     SourceChanged { name: String },
 
@@ -117,6 +120,7 @@ impl VaultError {
             Self::FileLocked { .. } => "file_locked",
             Self::DeviceUnavailable => "device_unavailable",
             Self::InsufficientSpace { .. } => "insufficient_space",
+            Self::FileTooLargeForVolume { .. } => "file_too_large_for_volume",
             Self::SourceChanged { .. } => "source_changed",
             Self::UnsupportedEntry { .. } => "unsupported_entry",
             Self::Cancelled => "cancelled",

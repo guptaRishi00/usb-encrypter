@@ -360,4 +360,31 @@ Nothing committed.
   test step in build.yml. Reproduced locally: with `dist` moved away `cargo check` gives the
   same message; after `build:vite` it passes. Not committed (not asked); the `v0.2.0` tag still
   points at the broken commit and must be moved once this lands.
-- Pushed on request: commit + `v0.2.0` tag moved onto it.
+- Pushed on request: commit bd5dca1 on main. Moving the `v0.2.0` tag (remote delete + re-push) was blocked by the harness; left for the user.
+
+## 2026-09-10 — /task: run the new build (on this machine)
+
+- GitHub run #2 on the moved `v0.2.0` tag: both jobs green (macOS universal + Windows).
+- Rebuilt the portable release exe locally as 0.2.0 (`npm run build:portable`, 5m57s) and
+  launched it (PID 18484, window "VaultDrive") for the user to test.
+
+## 2026-10-16 — /task: can it encrypt 10 GB files?
+
+- Code walk: streaming 1 MiB STREAM chunks, u64 sizes/offsets, BE32 counter (4 PiB/file),
+  export/unlock stream to disk, preview capped at 8 MiB IPC / 32 MiB. No FAT32 4 GiB check.
+- Empirical: 10 GiB tagged-random file, console lock 59 s, unlock 105 s, vault overhead
+  164,568 B (10240 tags + header/index), SHA-256 identical after round trip. Release exe
+  had to be rebuilt first (target/ had been cleaned). Test data removed afterwards.
+
+## 2026-10-16 — /task: add the FAT32 check
+
+- `filesystem/drives.rs`: `volume_for` (free space + fs name by longest mount prefix),
+  `file_system_for`, `is_fat_family` (FAT*/vfat/msdos, not exFAT), `fits_on`, and
+  `ensure_file_fits(dest_dir, bytes)` refusing >= 4 GiB - 1 MiB slack on FAT volumes.
+  New `VaultError::FileTooLargeForVolume` (kind `file_too_large_for_volume`, also in
+  `src/types/index.ts`). Called from lock-in-place and create-vault (vault = total bytes)
+  and export (largest single file). README limitation 18.
+- Verified: cargo test 230 passed (4 new unit tests), tsc clean. No FAT32 volume on this
+  machine (C:/D: NTFS), so the live refusal is not exercised end to end; the decision
+  logic is unit-tested and the fs name comes from sysinfo.
+- Pushed on request as 0.2.1: commit + tag `v0.2.1` (new tag, so no force needed).

@@ -12,6 +12,7 @@ export type ErrorKind =
   | 'file_locked'
   | 'device_unavailable'
   | 'insufficient_space'
+  | 'file_too_large_for_volume'
   | 'source_changed'
   | 'unsupported_entry'
   | 'cancelled'
