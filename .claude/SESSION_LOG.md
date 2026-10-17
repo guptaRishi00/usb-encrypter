@@ -449,3 +449,19 @@ Nothing committed.
   played with a live TOTP code. Harness gotchas: PowerShell strips double quotes in native
   args (pass JS via @file); evaluating before page load destroys the context.
 - Committed, tagged `v0.5.0` and pushed on request.
+
+## 2026-10-17 — /task: "this video cannot be played here"
+
+- Not a player bug. The source `Downloads/MILONG 2026 A NEW-001.mp4` (6.3 GB, H.264 1080p24
+  + AAC, DaVinci Resolve export) has its first ~621 MB overwritten with random bytes: no
+  ftyp/mdat header, first valid frame #10331 of 109,793 (= first 7.2 of 76.2 min). moov at the
+  end is intact; byte counts match exactly. ffprobe: "moov atom not found". Created == last
+  written == 13:08:22 and no VaultDrive activity then, so VaultDrive did not write it (its
+  scrub would bump the mtime). Format sweep (10 codec/container samples) was started but
+  stalled on a harness quoting bug; not needed once the file was found. Nothing changed.
+- Note: the player error text blames the format; for damaged files it should say so.
+- Mistake: the stalled background sweep finished after I had deleted its files and ran its
+  final `taskkill /IM VaultDrive.exe`, which closed the user's installed app and their
+  milong player too (graceful close; milong stays locked). Lesson: kill by PID, never by name.
+- /task push + release: nothing but this log changed since v0.5.0 (already built, success).
+  Pushed the log; no new tag, since a release would contain the identical app.
