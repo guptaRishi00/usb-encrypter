@@ -37,6 +37,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // Watch-only playback: the <video> element reads slices of the film
+        // through this protocol, decrypted in memory, never from a file.
+        .register_asynchronous_uri_scheme_protocol("vault", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            std::thread::spawn(move || {
+                responder.respond(commands::popup::serve_media(&app, &request));
+            });
+        })
         .on_window_event(|window, event| {
             // In a popup, closing an open folder locks it first; the relock
             // thread exits the app once that is done.
@@ -68,6 +76,9 @@ pub fn run() {
                         .inner_size(440.0, 480.0)
                         .resizable(false)
                         .maximizable(false)
+                        // Shows as black to screenshots, OBS and screen
+                        // sharing. A camera pointed at the screen still works.
+                        .content_protected(true)
                         .center()
                         .build()?;
                     app.manage(p);

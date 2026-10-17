@@ -22,6 +22,7 @@ import type {
   LockFailure,
   LockReport,
   PopupInfo,
+  PopupOpened,
   ProgressEvent,
   RemoteAuth,
   RemovalReport,
@@ -80,8 +81,12 @@ export const folderLockState = (path: string) =>
  * With `launchers`, a copy of VaultDrive.exe plus Unlock.cmd and Lock.cmd are
  * placed in the folder so it opens on a machine without VaultDrive.
  */
-export const lockFolder = (folder: string, password: string, launchers: boolean) =>
-  invoke<LockReport>('lock_folder', { folder, password, launchers });
+export const lockFolder = (
+  folder: string,
+  password: string,
+  launchers: boolean,
+  watchOnly: boolean,
+) => invoke<LockReport>('lock_folder', { folder, password, launchers, watchOnly });
 
 /** Restore a folder that was locked in place. */
 export const unlockFolder = (folder: string, password: string) =>
@@ -101,8 +106,9 @@ export const lockFolderWithAuthenticator = (
   enrolment: RemoteAuth,
   code: string,
   launchers: boolean,
+  watchOnly: boolean,
 ) =>
-  invoke<LockReport>('lock_folder_with_authenticator', { folder, enrolment, code, launchers });
+  invoke<LockReport>('lock_folder_with_authenticator', { folder, enrolment, code, launchers, watchOnly });
 
 export const unlockFolderWithAuthenticator = (folder: string, code: string) =>
   invoke<UnlockReport>('unlock_folder_with_authenticator', { folder, code });
@@ -171,7 +177,7 @@ export const onAutoLocked = (handler: () => void): Promise<UnlistenFn> =>
 
 /** `null` in the normal window. */
 export const popupInfo = () => invoke<PopupInfo | null>('popup_info');
-export const popupUnlock = (secret: string) => invoke<UnlockReport>('popup_unlock', { secret });
+export const popupUnlock = (secret: string) => invoke<PopupOpened>('popup_unlock', { secret });
 export const popupLock = (secret: string) => invoke<LockReport>('popup_lock', { secret });
 export const popupLockNow = () => invoke<void>('popup_lock_now');
 

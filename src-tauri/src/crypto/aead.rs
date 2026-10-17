@@ -15,7 +15,9 @@
 //! authenticate inside another.
 
 use chacha20poly1305::aead::generic_array::GenericArray;
-use chacha20poly1305::aead::stream::{DecryptorBE32, EncryptorBE32};
+use chacha20poly1305::aead::stream::{
+    DecryptorBE32, EncryptorBE32, NewStream, StreamBE32, StreamPrimitive,
+};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::XChaCha20Poly1305;
 
@@ -80,6 +82,28 @@ pub fn chunked_ciphertext_len(n: u64) -> u64 {
 }
 
 /// Streaming encryptor for one file's contents.
+/// Decrypt one chunk of a file's stream by its position, without reading the
+/// chunks before it.
+///
+/// This is what lets the player seek inside a film. STREAM derives each
+/// chunk's nonce from the file nonce, the chunk's position and the last-chunk
+/// flag, so a chunk authenticates on its own: one moved to another position,
+/// or a middle chunk passed off as the final one, fails like any tampering.
+pub fn decrypt_chunk_at(
+    key: &[u8; 32],
+    nonce: &[u8; STREAM_NONCE_LEN],
+    aad: &[u8],
+    position: u32,
+    last: bool,
+    ciphertext: &[u8],
+) -> Result<Vec<u8>> {
+    let cipher = XChaCha20Poly1305::new(GenericArray::from_slice(key));
+    let stream = StreamBE32::from_aead(cipher, GenericArray::from_slice(nonce));
+    stream
+        .decrypt(position, last, Payload { msg: ciphertext, aad })
+        .map_err(|_| VaultError::Integrity)
+}
+
 pub struct ChunkEncryptor {
     inner: Option<EncryptorBE32<XChaCha20Poly1305>>,
     aad: Vec<u8>,
@@ -147,6 +171,25 @@ impl ChunkDecryptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn any_chunk_decrypts_on_its_own_and_only_in_its_own_place() {
+        let key = [7u8; 32];
+        let nonce = [9u8; STREAM_NONCE_LEN];
+        let mut enc = ChunkEncryptor::new(&key, &nonce, b"file".to_vec());
+        let c0 = enc.next(b"zero").unwrap();
+        let c1 = enc.next(b"one").unwrap();
+        let c2 = enc.last(b"two").unwrap();
+
+        assert_eq!(decrypt_chunk_at(&key, &nonce, b"file", 1, false, &c1).unwrap(), b"one");
+        assert_eq!(decrypt_chunk_at(&key, &nonce, b"file", 2, true, &c2).unwrap(), b"two");
+        assert_eq!(decrypt_chunk_at(&key, &nonce, b"file", 0, false, &c0).unwrap(), b"zero");
+
+        // Wrong position, wrong last flag, wrong file binding: all refused.
+        assert!(decrypt_chunk_at(&key, &nonce, b"file", 0, false, &c1).is_err());
+        assert!(decrypt_chunk_at(&key, &nonce, b"file", 1, true, &c1).is_err());
+        assert!(decrypt_chunk_at(&key, &nonce, b"other", 1, false, &c1).is_err());
+    }
 
     #[test]
     fn seal_open_round_trip() {

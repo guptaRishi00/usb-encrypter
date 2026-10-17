@@ -276,6 +276,23 @@ way to do this "without any program": Argon2id and XChaCha20-Poly1305 are not
 available to a bare `.cmd` or to PowerShell, so the folder has to carry the
 engine.
 
+**Watch-only folders.** Ticking "Watch only" when locking a folder in place
+turns the program inside it into a player. After the password or authenticator
+code, the popup does not restore anything: it opens the vault in memory, lists
+the videos, and plays them through a `vault:` protocol that hands the web
+view's `<video>` element one slice (at most 4 MB) at a time. Each slice comes
+from `OpenVault::read_range`, which decrypts only the 1 MB chunks covering the
+range and authenticates every one before returning a byte, so seeking to the
+end of an 8 GB film costs a few megabytes and a chunk moved, swapped or altered
+is refused. Responses carry `Cache-Control: no-store`; the video's Download and
+Cast controls are removed; the player window is excluded from screen capture
+(`WDA_EXCLUDEFROMCAPTURE` on Windows: screenshots, OBS and screen sharing see
+through it). The flag lives inside the encrypted, authenticated index, so it
+cannot be switched off without the key, and the program in the folder, its
+launchers and `--unlock-folder` all refuse to restore such a folder. Only the
+installed application unlocks it. MP4 and MKV with H.264 play in the web view;
+other codecs depend on what the PC supports.
+
 **The popup window.** Double-clicking the `VaultDrive.exe` that sits inside a
 locked folder opens a small fixed-size window for that folder instead of the
 full application; the program recognises the launch because it has no arguments
@@ -556,6 +573,12 @@ vault was made on.
    before writing and tells you to reformat as exFAT or NTFS (or pick a smaller
    folder) instead of failing part-way with a "disk full" error. exFAT and NTFS
    have no such cap.
+19. **Watch only stops copying, not a determined viewer.** Anyone who has a
+   valid code holds the key for as long as the film plays. Installing VaultDrive
+   from the releases page and using its full unlock, or reading the process
+   memory, gets the film out; so does a camera pointed at the screen. What it
+   does stop: copying the drive, opening the vault in any other program, saving
+   the video from the player, and screenshots or screen recording of the player.
 
 ## Project structure
 

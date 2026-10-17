@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
 import { BrandMark, KeyIcon, LockIcon, SpinnerIcon } from '../components/Icons';
@@ -9,7 +10,7 @@ import { useSettings, useTheme } from '../hooks/useSettings';
 import * as api from '../services/api';
 import { asVaultError } from '../services/api';
 import { bytes, quantity } from '../services/format';
-import type { LockFailure, LockReport, PopupInfo, UnlockReport } from '../types';
+import type { LockFailure, LockReport, PlayableVideo, PopupInfo, UnlockReport } from '../types';
 
 /**
  * The small window that opens when the VaultDrive program inside a locked
@@ -18,7 +19,14 @@ import type { LockFailure, LockReport, PopupInfo, UnlockReport } from '../types'
  * Rust owns the countdown and the relock; this only shows them. Closing the
  * window while the folder is open locks it before the app exits.
  */
-type Phase = 'enter' | 'working' | 'open' | 'locking' | 'locked' | 'failed';
+type Phase = 'enter' | 'working' | 'open' | 'locking' | 'locked' | 'failed' | 'player';
+
+/**
+ * Attributes React's types do not list. `nodownload` removes the Download
+ * item Chromium puts in a video's own menu, which would otherwise save the
+ * decrypted film to disk.
+ */
+const VIDEO_LOCKDOWN = { controlsList: 'nodownload noremoteplayback', disableRemotePlayback: true };
 
 const CODE = /^\d{6}$/;
 
@@ -37,6 +45,10 @@ export function FolderPopup({ info }: { info: PopupInfo }) {
   const [locked, setLocked] = useState<LockReport | null>(null);
   const [failure, setFailure] = useState<LockFailure | null>(null);
   const [left, setLeft] = useState(info.relockAfter);
+  const [videos, setVideos] = useState<PlayableVideo[]>([]);
+  const [otherFiles, setOtherFiles] = useState(0);
+  const [current, setCurrent] = useState<number | null>(null);
+  const [playError, setPlayError] = useState(false);
   const progress = useProgress(phase === 'working' || phase === 'locking');
 
   // Relock happens on its own schedule, so listen for it for the whole life of
@@ -89,8 +101,16 @@ export function FolderPopup({ info }: { info: PopupInfo }) {
         setLocked(await api.popupLock(typed));
         setPhase('locked');
       } else {
-        setRestored(await api.popupUnlock(typed));
-        setPhase('open');
+        const opened = await api.popupUnlock(typed);
+        if (opened.player) {
+          setVideos(opened.videos);
+          setOtherFiles(opened.otherFiles);
+          setCurrent(opened.videos[0]?.id ?? null);
+          setPhase('player');
+        } else {
+          setRestored(opened.report);
+          setPhase('open');
+        }
       }
     } catch (e) {
       setError(asVaultError(e).message);
@@ -110,7 +130,9 @@ export function FolderPopup({ info }: { info: PopupInfo }) {
         <div style={{ minWidth: 0 }}>
           <div className="popup-title truncate">{info.name}</div>
           <div className="faint">
-            {phase === 'open'
+            {phase === 'player'
+              ? 'Watch only. Nothing is unlocked on disk.'
+              : phase === 'open'
               ? 'Open'
               : phase === 'locked'
                 ? 'Locked'
@@ -237,6 +259,55 @@ export function FolderPopup({ info }: { info: PopupInfo }) {
           <button className="btn btn-lg btn-block" onClick={() => void getCurrentWindow().close()}>
             Close
           </button>
+        </div>
+      )}
+
+      {phase === 'player' && (
+        <div className="player">
+          {current === null ? (
+            <Note tone="warn">There are no videos in this folder to play.</Note>
+          ) : (
+            <video
+              key={current}
+              className="player-video"
+              src={convertFileSrc(String(current), 'vault')}
+              controls
+              autoPlay
+              disablePictureInPicture
+              {...VIDEO_LOCKDOWN}
+              onPlaying={() => setPlayError(false)}
+              onError={() => setPlayError(true)}
+            />
+          )}
+          {playError && (
+            <Note tone="danger" title="This video cannot be played here">
+              MP4 files with H.264 video play everywhere. Other formats depend on what this
+              computer supports; convert the film to MP4 before locking it.
+            </Note>
+          )}
+          {videos.length > 1 && (
+            <div className="player-list">
+              {videos.map((v) => (
+                <button
+                  key={v.id}
+                  className={`btn ${v.id === current ? 'btn-primary' : ''}`}
+                  onClick={() => {
+                    setPlayError(false);
+                    setCurrent(v.id);
+                  }}
+                >
+                  <span className="truncate">{v.name}</span>
+                  <span className="faint">{bytes(v.size)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {otherFiles > 0 && (
+            <span className="faint">
+              {quantity(otherFiles, 'other file')} in this folder cannot be opened in watch-only
+              mode.
+            </span>
+          )}
         </div>
       )}
 

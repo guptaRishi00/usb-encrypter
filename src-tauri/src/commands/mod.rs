@@ -341,6 +341,7 @@ pub async fn lock_folder(
     folder: String,
     password: String,
     launchers: bool,
+    watch_only: bool,
 ) -> Result<vault::LockReport> {
     let st = state.inner().clone();
     st.session.cancel_flag().begin();
@@ -348,11 +349,12 @@ pub async fn lock_folder(
     blocking(move || {
         let password = Zeroizing::new(password);
         let progress = WindowProgress::new(app, st.clone());
-        vault::lock_folder_in_place(
+        vault::lock_folder_in_place_with(
             Path::new(&folder),
             password.as_bytes(),
             crate::crypto::KdfParams::interactive(),
             launchers,
+            watch_only,
             &progress,
         )
     })
@@ -389,6 +391,7 @@ pub async fn lock_folder_with_authenticator(
     enrolment: crate::remote::RemoteAuth,
     code: String,
     launchers: bool,
+    watch_only: bool,
 ) -> Result<vault::LockReport> {
     let st = state.inner().clone();
     st.session.cancel_flag().begin();
@@ -398,11 +401,12 @@ pub async fn lock_folder_with_authenticator(
         let folder = Path::new(&folder);
         enrolment.save(folder)?;
         let progress = WindowProgress::new(app, st.clone());
-        let result = vault::lock_folder_in_place(
+        let result = vault::lock_folder_in_place_with(
             folder,
             &key,
             crate::crypto::KdfParams::interactive(),
             launchers,
+            watch_only,
             &progress,
         );
         if result.is_err() {
@@ -433,7 +437,7 @@ pub async fn unlock_folder_with_authenticator(
         })?;
         let key = crate::remote::redeem(&auth.site, &auth.token, &code)?;
         let progress = WindowProgress::new(app, st.clone());
-        vault::unlock_folder_in_place(folder, &key, &progress)
+        vault::unlock_folder_in_place_with(folder, &key, true, &progress)
     })
     .await
 }
@@ -483,7 +487,7 @@ pub async fn unlock_folder(
     blocking(move || {
         let password = Zeroizing::new(password);
         let progress = WindowProgress::new(app, st.clone());
-        vault::unlock_folder_in_place(Path::new(&folder), password.as_bytes(), &progress)
+        vault::unlock_folder_in_place_with(Path::new(&folder), password.as_bytes(), true, &progress)
     })
     .await
 }

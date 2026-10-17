@@ -20,6 +20,7 @@ export type ErrorKind =
   | 'already_exists'
   | 'no_such_entry'
   | 'invalid_move'
+  | 'watch_only'
   | 'wrong_code'
   | 'too_many_attempts'
   | 'offline'
@@ -108,6 +109,22 @@ export interface PopupInfo {
   authMode: AuthMode;
   /** Seconds the folder stays open; 0 means until "Lock now". */
   relockAfter: number;
+}
+
+/** A video a watch-only folder can play. */
+export interface PlayableVideo {
+  id: number;
+  name: string;
+  size: number;
+}
+
+/** What entering the code in a popup did. */
+export interface PopupOpened {
+  /** True for a watch-only folder, opened in memory for playback. */
+  player: boolean;
+  report: UnlockReport | null;
+  videos: PlayableVideo[];
+  otherFiles: number;
 }
 
 /** Sent when the automatic relock in a popup does not complete. */

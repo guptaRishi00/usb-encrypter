@@ -60,6 +60,17 @@ pub struct VaultIndex {
     pub created_at: i64,
     pub next_id: u64,
     pub nodes: Vec<Node>,
+    /// The folder was locked "watch only": the program inside it plays the
+    /// videos but will not restore anything to disk. Stored here, inside the
+    /// encrypted and authenticated index, so it cannot be switched off without
+    /// the key. Omitted when false, so ordinary vaults are byte-for-byte what
+    /// they were before this existed.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub watch_only: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 impl VaultIndex {
@@ -80,6 +91,7 @@ impl VaultIndex {
             created_at,
             next_id: ROOT_ID + 1,
             nodes: vec![root],
+            watch_only: false,
         }
     }
 

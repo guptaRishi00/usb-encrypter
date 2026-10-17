@@ -426,3 +426,26 @@ Nothing committed.
   was typed and sent into the chat. Stopped GUI automation (user active on the machine);
   the popup no-countdown screen was not visually confirmed. Test data deleted.
 - Committed, tagged `v0.4.0`, pushed on request.
+
+## 2026-10-17 — /task: watch-only folders (encrypted player)
+
+- Spec: lock a folder so the program in it plays the videos without ever unlocking.
+  Engine: `aead::decrypt_chunk_at` (STREAM chunk by position), `OpenVault::read_range`
+  (authenticates every covering chunk), `VaultIndex.watch_only` (authenticated, omitted when
+  false, kept by compaction), `lock_folder_in_place_with`, `unlock_folder_in_place_with`
+  (only the installed app passes allow=true), `open_folder_vault`/`restore_folder` split,
+  `VaultError::WatchOnly`. Popup: `popup_unlock` returns `PopupOpened`; watch-only opens the
+  vault in session (auto-lock off), enlarges the window, phase Playing; `vault:` async URI
+  protocol serves 4 MB 206 slices with no-store, only in Playing. Popup window
+  `content_protected(true)`. CSP media-src += vault. UI: Watch only checkbox (forces
+  launchers), player in FolderPopup with nodownload/no PiP/no remote playback.
+- No new dependencies (web view playback, not libVLC).
+- Verified: 244 tests (7 new: chunk-at, ranges across boundaries, per-chunk tamper, watch-only
+  refusal + owner unlock, compaction keeps flag, range parsing, playable list). Live via the
+  WebView2 DevTools port (no mouse/keyboard): watch-only lock through the real app; popup
+  played a 287 MB 1080p MP4 (moov at end) and an H.264 MKV; seeks 0.1-0.4 s; no plaintext in
+  the folder; web view data shrank (no film cached); `--unlock-folder` refused; display
+  affinity 0x11 and a screen capture showed the window behind it; authenticator folder
+  played with a live TOTP code. Harness gotchas: PowerShell strips double quotes in native
+  args (pass JS via @file); evaluating before page load destroys the context.
+- Committed, tagged `v0.5.0` and pushed on request.

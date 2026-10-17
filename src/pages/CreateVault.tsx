@@ -50,6 +50,9 @@ export function CreateVault({
   // On by default: the point of locking a folder on a USB stick is opening it
   // on a computer that has never seen VaultDrive.
   const [launchers, setLaunchers] = useState(true);
+  // Watch only needs the program in the folder: it is the player.
+  const [watchOnly, setWatchOnly] = useState(false);
+  const withLaunchers = launchers || watchOnly;
   const [protection, setProtection] = useState<Protection>('password');
   const [enrolment, setEnrolment] = useState<Enrolment | null>(null);
   const [enrolling, setEnrolling] = useState(false);
@@ -149,7 +152,8 @@ export function CreateVault({
           source,
           { site, token, vaultId, name },
           code.trim(),
-          launchers,
+          withLaunchers,
+          mode === 'in-place' && watchOnly,
         );
         setCode('');
         setEnrolment(null);
@@ -158,7 +162,7 @@ export function CreateVault({
         return;
       }
       if (mode === 'in-place') {
-        const locked = await api.lockFolder(source, password, launchers);
+        const locked = await api.lockFolder(source, password, withLaunchers, watchOnly);
         setPassword('');
         setConfirm('');
         setLockReport(locked);
@@ -519,7 +523,8 @@ export function CreateVault({
             <label className="row" style={{ gap: 10, alignItems: 'flex-start', padding: '2px 4px' }}>
               <input
                 type="checkbox"
-                checked={launchers}
+                checked={withLaunchers}
+                disabled={watchOnly}
                 onChange={(e) => setLaunchers(e.target.checked)}
                 style={{ marginTop: 3, accentColor: 'var(--accent)' }}
               />
@@ -529,6 +534,27 @@ export function CreateVault({
                   Puts a copy of VaultDrive.exe (about 5 MB) plus Unlock.cmd and Lock.cmd inside the
                   folder. On any Windows machine, double-click Unlock.cmd and type the password. No
                   installation, no window.
+                </span>
+              </span>
+            </label>
+          )}
+
+          {mode === 'in-place' && (
+            <label className="row" style={{ gap: 10, alignItems: 'flex-start', padding: '2px 4px' }}>
+              <input
+                type="checkbox"
+                checked={watchOnly}
+                onChange={(e) => setWatchOnly(e.target.checked)}
+                style={{ marginTop: 3, accentColor: 'var(--accent)' }}
+              />
+              <span>
+                <strong style={{ fontWeight: 560 }}>Watch only</strong>
+                <span className="choice-detail">
+                  Double-clicking VaultDrive in the folder plays its videos straight from the
+                  encrypted file, decrypted in memory, and never unlocks the folder, so nobody gets
+                  a copy that way. The player window shows black to screenshots and screen sharing.
+                  MP4 videos play everywhere. Only this installed app can unlock the folder again,
+                  and anyone you give a code to could do the same by installing it.
                 </span>
               </span>
             </label>

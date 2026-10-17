@@ -17,8 +17,8 @@ use std::path::{Path, PathBuf};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::crypto::aead::{
-    chunked_ciphertext_len, open as aead_open, seal as aead_seal, ChunkDecryptor, ChunkEncryptor,
-    CHUNK_CIPHERTEXT_SIZE, CHUNK_SIZE, STREAM_NONCE_LEN,
+    chunked_ciphertext_len, decrypt_chunk_at, open as aead_open, seal as aead_seal,
+    ChunkDecryptor, ChunkEncryptor, CHUNK_CIPHERTEXT_SIZE, CHUNK_SIZE, STREAM_NONCE_LEN,
 };
 use crate::crypto::keys::Key32;
 use crate::crypto::random::random_array;
@@ -498,6 +498,70 @@ impl OpenVault {
         Ok(())
     }
 
+    /// Decrypt `len` bytes of a file starting at `offset`, reading only the
+    /// chunks that cover that range.
+    ///
+    /// This is the player's read path: seeking to the middle of an 8 GB film
+    /// decrypts a few megabytes, not the hour before it, and nothing is ever
+    /// written to disk. Every chunk is authenticated before any of its bytes
+    /// are returned. A range past the end returns what exists, possibly nothing.
+    pub fn read_range(&mut self, id: u64, offset: u64, len: usize) -> Result<Vec<u8>> {
+        let node = self.index.get(id)?.clone();
+        if node.is_dir() {
+            return Err(VaultError::InvalidInput("That is a folder, not a file.".into()));
+        }
+        if node.nonce.len() != STREAM_NONCE_LEN || node.enc_len != chunked_ciphertext_len(node.size)
+        {
+            return Err(VaultError::Integrity);
+        }
+        if len == 0 || offset >= node.size {
+            return Ok(Vec::new());
+        }
+
+        let chunk = CHUNK_SIZE as u64;
+        let end = offset.saturating_add(len as u64).min(node.size);
+        // Matches the writer: a final chunk is emitted even when it is full,
+        // so a file of exactly N chunks has N, and an empty one has one.
+        let total_chunks = node.size.div_ceil(chunk).max(1);
+        let first = offset / chunk;
+        let last = (end - 1) / chunk;
+
+        let mut nonce = [0u8; STREAM_NONCE_LEN];
+        nonce.copy_from_slice(&node.nonce);
+        let aad = file_aad(&self.header_bytes, node.id);
+
+        let mut out = Vec::with_capacity((end - offset) as usize);
+        let mut buf = vec![0u8; CHUNK_CIPHERTEXT_SIZE];
+        for i in first..=last {
+            let ct_offset = i * CHUNK_CIPHERTEXT_SIZE as u64;
+            let ct_len = node
+                .enc_len
+                .checked_sub(ct_offset)
+                .ok_or(VaultError::Integrity)?
+                .min(CHUNK_CIPHERTEXT_SIZE as u64) as usize;
+            self.file
+                .seek(SeekFrom::Start(node.offset + ct_offset))
+                .map_err(|e| VaultError::from_io(&e, &self.path))?;
+            self.file.read_exact(&mut buf[..ct_len]).map_err(|_| VaultError::Truncated)?;
+
+            let position = u32::try_from(i).map_err(|_| VaultError::Integrity)?;
+            let pt = Zeroizing::new(decrypt_chunk_at(
+                &self.content_key,
+                &nonce,
+                &aad,
+                position,
+                i + 1 == total_chunks,
+                &buf[..ct_len],
+            )?);
+
+            let chunk_start = i * chunk;
+            let from = (offset.max(chunk_start) - chunk_start) as usize;
+            let to = (end.min(chunk_start + pt.len() as u64) - chunk_start) as usize;
+            out.extend_from_slice(&pt[from..to]);
+        }
+        Ok(out)
+    }
+
     /// Decrypt one file into memory. Refuses anything above `limit`, so a
     /// preview can never be asked to load a multi-gigabyte video.
     pub fn read_file_to_vec(&mut self, id: u64, limit: usize) -> Result<Vec<u8>> {
@@ -897,6 +961,7 @@ impl OpenVault {
             &me.index.vault_name,
             me.index.created_at,
         )?;
+        builder.set_watch_only(me.index.watch_only);
 
         let all = me.index.subtree(ROOT_ID);
         let mut old_to_new: HashMap<u64, u64> = HashMap::new();
@@ -1066,6 +1131,11 @@ impl VaultBuilder {
 
     pub fn add_dir(&mut self, parent: u64, name: &str, mtime: Option<i64>) -> Result<u64> {
         self.index.add_dir(parent, name, mtime)
+    }
+
+    /// Mark the vault watch only. See [`VaultIndex::watch_only`].
+    pub fn set_watch_only(&mut self, on: bool) {
+        self.index.watch_only = on;
     }
 
     pub fn index(&self) -> &VaultIndex {

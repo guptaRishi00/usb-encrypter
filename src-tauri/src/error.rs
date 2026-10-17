@@ -81,6 +81,9 @@ pub enum VaultError {
     #[error("A folder cannot be moved inside itself.")]
     InvalidMove,
 
+    #[error("This folder is watch only. Its videos play from VaultDrive inside the folder, but it cannot be unlocked there.")]
+    WatchOnly,
+
     /// The authenticator server rejected the six-digit code.
     #[error("Incorrect code.
 The vault could not be unlocked.")]
@@ -128,6 +131,7 @@ impl VaultError {
             Self::AlreadyExists { .. } => "already_exists",
             Self::NoSuchEntry => "no_such_entry",
             Self::InvalidMove => "invalid_move",
+            Self::WatchOnly => "watch_only",
             Self::WrongCode => "wrong_code",
             Self::TooManyAttempts => "too_many_attempts",
             Self::Offline => "offline",

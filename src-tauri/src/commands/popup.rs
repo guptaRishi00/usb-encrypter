@@ -77,6 +77,9 @@ enum Phase {
     /// The last lock attempt failed and the user has been told. Closing is
     /// allowed, because the window has said the folder is still open.
     Failed,
+    /// A watch-only folder is open in memory for playback. Nothing is on
+    /// disk, so closing simply closes and the key goes with the process.
+    Playing,
 }
 
 /// Popup-mode state, managed by Tauri only when the window is a popup.
@@ -141,7 +144,7 @@ impl Popup {
                 self.exit_after_lock.store(true, Ordering::SeqCst);
                 true
             }
-            Phase::Idle | Phase::Failed => false,
+            Phase::Idle | Phase::Failed | Phase::Playing => false,
         }
     }
 }
@@ -155,6 +158,58 @@ pub struct PopupInfo {
     pub auth_mode: AuthMode,
     /// Seconds an unlocked folder stays open. Zero means until "Lock now".
     pub relock_after: u64,
+}
+
+/// One video a watch-only folder can play.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayableVideo {
+    pub id: u64,
+    pub name: String,
+    pub size: u64,
+}
+
+/// What entering the code did: restored the folder to disk, or opened a
+/// watch-only folder for playback.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PopupOpened {
+    pub player: bool,
+    pub report: Option<vault::UnlockReport>,
+    pub videos: Vec<PlayableVideo>,
+    /// Files in a watch-only folder that are not videos and cannot be opened.
+    pub other_files: u64,
+}
+
+const VIDEO_EXTENSIONS: [&str; 5] = ["mp4", "m4v", "mov", "webm", "mkv"];
+
+fn extension(name: &str) -> String {
+    name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default()
+}
+
+fn playable(index: &vault::VaultIndex) -> (Vec<PlayableVideo>, u64) {
+    let mut videos = Vec::new();
+    let mut other = 0;
+    for n in index.nodes.iter().filter(|n| !n.is_dir()) {
+        if VIDEO_EXTENSIONS.contains(&extension(&n.name).as_str()) {
+            videos.push(PlayableVideo { id: n.id, name: n.name.clone(), size: n.size });
+        } else {
+            other += 1;
+        }
+    }
+    videos.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    (videos, other)
+}
+
+/// The popup is a small form; a film needs room.
+fn enlarge_for_playback(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.set_resizable(true);
+        let _ = w.set_maximizable(true);
+        let _ = w.set_min_size(Some(tauri::LogicalSize::new(640.0, 420.0)));
+        let _ = w.set_size(tauri::LogicalSize::new(1120.0, 720.0));
+        let _ = w.center();
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -195,13 +250,14 @@ pub fn popup_info(app: AppHandle) -> Option<PopupInfo> {
     })
 }
 
-/// Restore the folder, then hold the key until it is time to lock again.
+/// Restore the folder, then hold the key until it is time to lock again. A
+/// watch-only folder is not restored: it is opened in memory for playback.
 #[tauri::command]
 pub async fn popup_unlock(
     app: AppHandle,
     state: St<'_>,
     secret: String,
-) -> Result<vault::UnlockReport> {
+) -> Result<PopupOpened> {
     let st = state.inner().clone();
     let popup = popup_state(&app)?;
     if popup.phase() != Phase::Idle {
@@ -210,12 +266,22 @@ pub async fn popup_unlock(
     popup.set_phase(Phase::Busy);
     st.session.cancel_flag().begin();
 
+    enum Opened {
+        Restored(vault::UnlockReport),
+        Player(vault::OpenVault),
+    }
+
     blocking(move || {
-        let unlocked = secret_for(popup.folder(), secret).and_then(|key| {
+        let opened = secret_for(popup.folder(), secret).and_then(|key| {
+            let vault = vault::open_folder_vault(popup.folder(), &key)?;
+            if vault.index().watch_only {
+                return Ok((key, Opened::Player(vault)));
+            }
             let progress = WindowProgress::new(app.clone(), st.clone());
-            vault::unlock_folder_in_place(popup.folder(), &key, &progress).map(|r| (key, r))
+            vault::restore_folder(popup.folder(), vault, &progress)
+                .map(|r| (key, Opened::Restored(r)))
         });
-        let (key, report) = match unlocked {
+        let (key, opened) = match opened {
             Ok(v) => v,
             Err(e) => {
                 popup.set_phase(Phase::Idle);
@@ -223,6 +289,25 @@ pub async fn popup_unlock(
                     app.exit(0);
                 }
                 return Err(e);
+            }
+        };
+
+        let report = match opened {
+            Opened::Restored(r) => r,
+            Opened::Player(vault) => {
+                // The key is not needed again: the open vault holds its own
+                // subkeys, and nothing will ever be re-encrypted from here.
+                drop(key);
+                let (videos, other_files) = playable(vault.index());
+                // A paused film must not lock itself; the window is the session.
+                st.session.set_auto_lock(None);
+                st.session.set_vault(vault);
+                popup.set_phase(Phase::Playing);
+                if popup.exit_after_lock.load(Ordering::SeqCst) {
+                    app.exit(0);
+                }
+                enlarge_for_playback(&app);
+                return Ok(PopupOpened { player: true, report: None, videos, other_files });
             }
         };
 
@@ -236,9 +321,113 @@ pub async fn popup_unlock(
             popup.poke();
         }
         std::thread::spawn(move || hold_then_relock(app, st, popup, key, rx));
-        Ok(report)
+        Ok(PopupOpened { player: false, report: Some(report), videos: Vec::new(), other_files: 0 })
     })
     .await
+}
+
+/// Largest slice of a video handed to the web view in one response. The
+/// player asks again for the next slice as it plays, so memory stays bounded
+/// whatever the size of the film.
+const MEDIA_SLICE: u64 = 4 * 1024 * 1024;
+
+/// Parse an HTTP `Range` header into an inclusive byte range, capped at one
+/// slice. `None` means the range cannot be satisfied.
+fn media_range(header: Option<&str>, size: u64) -> Option<(u64, u64)> {
+    if size == 0 {
+        return None;
+    }
+    let spec = header.and_then(|h| h.trim().strip_prefix("bytes=")).unwrap_or("0-");
+    let spec = spec.split(',').next()?.trim();
+    let (a, b) = spec.split_once('-')?;
+    let (start, end) = if a.is_empty() {
+        // "bytes=-N": the last N bytes.
+        let n: u64 = b.parse().ok()?;
+        (size.saturating_sub(n), size - 1)
+    } else {
+        let start: u64 = a.parse().ok()?;
+        let end = if b.is_empty() { size - 1 } else { b.parse::<u64>().ok()?.min(size - 1) };
+        (start, end)
+    };
+    if start >= size || end < start {
+        return None;
+    }
+    Some((start, end.min(start + MEDIA_SLICE - 1)))
+}
+
+fn media_type(name: &str) -> &'static str {
+    match extension(name).as_str() {
+        "mp4" | "m4v" | "mov" => "video/mp4",
+        "webm" => "video/webm",
+        "mkv" => "video/x-matroska",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Serve a slice of a video from the open watch-only vault to the web view's
+/// `<video>` element, through the `vault:` protocol.
+///
+/// Only while this window is a popup in playback: the main application and a
+/// popup that restored a folder get nothing. Every byte comes from
+/// [`vault::OpenVault::read_range`], so it is authenticated before it is sent,
+/// and `no-store` keeps the web view from caching plaintext on disk.
+pub fn serve_media(
+    app: &AppHandle,
+    request: &tauri::http::Request<Vec<u8>>,
+) -> tauri::http::Response<Vec<u8>> {
+    use tauri::http::{header, Response, StatusCode};
+
+    let empty = |status: StatusCode, extra: Option<(header::HeaderName, String)>| {
+        let mut r = Response::builder().status(status).header(header::CACHE_CONTROL, "no-store");
+        if let Some((k, v)) = extra {
+            r = r.header(k, v);
+        }
+        r.body(Vec::new()).unwrap_or_default()
+    };
+
+    let playing = popup_state(app).map(|p| p.phase() == Phase::Playing).unwrap_or(false);
+    let Some(st) = app.try_state::<Arc<AppState>>().filter(|_| playing) else {
+        return empty(StatusCode::FORBIDDEN, None);
+    };
+    let Ok(id) = request.uri().path().trim_start_matches('/').parse::<u64>() else {
+        return empty(StatusCode::NOT_FOUND, None);
+    };
+    let meta = st.session.with(|v| {
+        let n = v.index().get(id)?;
+        if n.is_dir() {
+            return Err(VaultError::NoSuchEntry);
+        }
+        Ok((n.size, n.name.clone()))
+    });
+    let Ok((size, name)) = meta else {
+        return empty(StatusCode::NOT_FOUND, None);
+    };
+
+    let range = request.headers().get(header::RANGE).and_then(|v| v.to_str().ok());
+    let Some((start, end)) = media_range(range, size) else {
+        return empty(
+            StatusCode::RANGE_NOT_SATISFIABLE,
+            Some((header::CONTENT_RANGE, format!("bytes */{size}"))),
+        );
+    };
+    let body = match st.session.with(|v| v.read_range(id, start, (end - start + 1) as usize)) {
+        Ok(b) if !b.is_empty() => b,
+        _ => {
+            // Tampered, truncated or unplugged: fail closed, send nothing.
+            tracing::warn!("a media slice could not be read");
+            return empty(StatusCode::INTERNAL_SERVER_ERROR, None);
+        }
+    };
+    let last = start + body.len() as u64 - 1;
+    Response::builder()
+        .status(StatusCode::PARTIAL_CONTENT)
+        .header(header::CONTENT_TYPE, media_type(&name))
+        .header(header::CONTENT_LENGTH, body.len().to_string())
+        .header(header::CONTENT_RANGE, format!("bytes {start}-{last}/{size}"))
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(body)
+        .unwrap_or_default()
 }
 
 /// Lock now instead of waiting, or try again after a failed lock.
@@ -390,6 +579,29 @@ mod tests {
     }
 
     #[test]
+    fn media_ranges_are_parsed_and_capped_to_one_slice() {
+        let mb = 1024 * 1024;
+        assert_eq!(media_range(None, 10), Some((0, 9)));
+        assert_eq!(media_range(Some("bytes=0-"), 100 * mb), Some((0, MEDIA_SLICE - 1)));
+        assert_eq!(media_range(Some("bytes=5-9"), 100), Some((5, 9)));
+        assert_eq!(media_range(Some("bytes=95-500"), 100), Some((95, 99)));
+        assert_eq!(media_range(Some("bytes=-10"), 100), Some((90, 99)));
+        assert_eq!(media_range(Some("bytes=100-"), 100), None, "past the end");
+        assert_eq!(media_range(Some("bytes=9-5"), 100), None, "backwards");
+        assert_eq!(media_range(Some("bytes=x-"), 100), None);
+        assert_eq!(media_range(Some("bytes=0-"), 0), None, "empty file");
+    }
+
+    #[test]
+    fn only_video_files_are_offered_for_playback() {
+        assert_eq!(media_type("Film.MP4"), "video/mp4");
+        assert_eq!(media_type("clip.webm"), "video/webm");
+        assert_eq!(media_type("notes.txt"), "application/octet-stream");
+        assert!(VIDEO_EXTENSIONS.contains(&extension("a.b.MKV").as_str()));
+        assert!(!VIDEO_EXTENSIONS.contains(&extension("noext").as_str()));
+    }
+
+    #[test]
     fn closing_waits_only_while_the_folder_is_open_or_locking() {
         let p = Popup::new(LaunchTarget { folder: PathBuf::from("x"), relock_after: 60 });
         assert!(!p.on_close_requested(), "idle closes");
@@ -411,5 +623,8 @@ mod tests {
 
         p.set_phase(Phase::Failed);
         assert!(!p.on_close_requested(), "after a reported failure the user may leave");
+
+        p.set_phase(Phase::Playing);
+        assert!(!p.on_close_requested(), "playback leaves nothing on disk to lock");
     }
 }

@@ -337,6 +337,19 @@ pub fn lock_folder_in_place(
     launchers: bool,
     progress: &dyn ProgressSink,
 ) -> Result<LockReport> {
+    lock_folder_in_place_with(folder, password, kdf_params, launchers, false, progress)
+}
+
+/// [`lock_folder_in_place`], optionally marking the vault watch only: the
+/// program in the folder will then play its videos but never restore them.
+pub fn lock_folder_in_place_with(
+    folder: &Path,
+    password: &[u8],
+    kdf_params: KdfParams,
+    launchers: bool,
+    watch_only: bool,
+    progress: &dyn ProgressSink,
+) -> Result<LockReport> {
     if password.is_empty() {
         return Err(VaultError::InvalidInput(
             "Enter a password. A folder locked with no password protects nothing.".into(),
@@ -392,6 +405,7 @@ pub fn lock_folder_in_place(
     tracing::info!(files, folders, total_bytes, "locking folder in place");
 
     let mut builder = VaultBuilder::begin(&vault_path, password, &display_name, kdf_params)?;
+    builder.set_watch_only(watch_only);
     let mut dir_ids: std::collections::HashMap<Vec<String>, u64> = std::collections::HashMap::new();
     dir_ids.insert(Vec::new(), ROOT_ID);
 
@@ -492,19 +506,53 @@ pub struct UnlockReport {
 /// folder is an ordinary folder again. The vault file is only deleted after
 /// every file has been written out, so an interrupted unlock leaves the vault
 /// intact and can simply be run again.
+///
+/// A watch-only folder is refused with [`VaultError::WatchOnly`]: this is the
+/// path the program inside the folder and its launchers use.
 pub fn unlock_folder_in_place(
     folder: &Path,
     password: &[u8],
     progress: &dyn ProgressSink,
 ) -> Result<UnlockReport> {
+    unlock_folder_in_place_with(folder, password, false, progress)
+}
+
+/// [`unlock_folder_in_place`], with the watch-only refusal lifted. Only the
+/// installed application passes `true`: watch only is a barrier for the
+/// program travelling with the folder, not a cryptographic one, and the README
+/// says so.
+pub fn unlock_folder_in_place_with(
+    folder: &Path,
+    password: &[u8],
+    allow_watch_only: bool,
+    progress: &dyn ProgressSink,
+) -> Result<UnlockReport> {
+    let vault = open_folder_vault(folder, password)?;
+    if vault.index().watch_only && !allow_watch_only {
+        return Err(VaultError::WatchOnly);
+    }
+    restore_folder(folder, vault, progress)
+}
+
+/// Open the vault inside a locked folder without restoring anything.
+pub fn open_folder_vault(folder: &Path, password: &[u8]) -> Result<OpenVault> {
     let vault_path = folder.join(IN_PLACE_VAULT_NAME);
     if !vault_path.is_file() {
         return Err(VaultError::InvalidInput(
             "That folder is not locked by VaultDrive.".into(),
         ));
     }
+    OpenVault::unlock(&vault_path, password)
+}
 
-    let mut vault = OpenVault::unlock(&vault_path, password)?;
+/// Write an opened folder vault's contents back into the folder, then delete
+/// the container. Callers decide whether a watch-only vault may get here.
+pub fn restore_folder(
+    folder: &Path,
+    mut vault: OpenVault,
+    progress: &dyn ProgressSink,
+) -> Result<UnlockReport> {
+    let vault_path = folder.join(IN_PLACE_VAULT_NAME);
     let (files, folders, total_bytes) = vault.index().stats();
 
     // Restoring puts the plaintext beside the vault that still holds it.
