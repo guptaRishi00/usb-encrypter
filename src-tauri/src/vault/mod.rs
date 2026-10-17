@@ -76,6 +76,25 @@ pub const IN_PLACE_ARTIFACTS: [&str; 10] = [
     crate::remote::REMOTE_AUTH_FILE,
 ];
 
+/// The only artefacts left visible in a locked folder: the program itself, the
+/// one thing to double-click. Everything else in [`IN_PLACE_ARTIFACTS`] is
+/// marked hidden.
+pub const VISIBLE_ARTIFACTS: [&str; 3] = [LAUNCHER_EXE_NAME, LAUNCHER_MAC_NAME, "VaultDrive-linux"];
+
+/// Hide every VaultDrive file in `folder` except the program. Best effort:
+/// hiding is tidiness, not protection.
+fn hide_artifacts(folder: &Path) {
+    for name in IN_PLACE_ARTIFACTS {
+        if VISIBLE_ARTIFACTS.iter().any(|v| v.eq_ignore_ascii_case(name)) {
+            continue;
+        }
+        let p = folder.join(name);
+        if p.exists() {
+            crate::filesystem::hidden::set_hidden(&p, true);
+        }
+    }
+}
+
 /// How a folder expects to be unlocked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -170,10 +189,11 @@ XChaCha20-Poly1305 under a key derived from a password with Argon2id.
 To get the files back:
 
   * On Windows: double-click VaultDrive.exe. A small window asks for the
-    password or the authenticator code, opens the folder, and locks it again
-    after a minute (or when you close the window). Works on any Windows 10 or
-    11 computer, with nothing installed. Unlock.cmd does the same in a
-    console window, if the small window ever cannot start.
+    password or the authenticator code and opens the folder. It stays open
+    until you press Lock now or close that window. Works on any Windows 10 or
+    11 computer, with nothing installed. Unlock.cmd (a hidden file in this
+    folder) does the same in a console window, if the small window ever
+    cannot start.
 
   * On a Mac: double-click Unlock.command. It needs the Mac version of
     VaultDrive (VaultDrive-macos) to be in this folder too, which a Mac adds
@@ -225,13 +245,15 @@ fn write_launchers(folder: &Path) -> Result<()> {
     // wherever it is plugged in.
     for (name, flag) in [(UNLOCK_CMD_NAME, "--unlock-folder"), (LOCK_CMD_NAME, "--lock-folder")] {
         let p = folder.join(name);
-        std::fs::write(&p, launcher_text(flag)).map_err(|e| VaultError::from_io(&e, &p))?;
+        crate::filesystem::hidden::write_replacing(&p, launcher_text(flag))
+            .map_err(|e| VaultError::from_io(&e, &p))?;
     }
     for (name, flag) in
         [(UNLOCK_COMMAND_NAME, "--unlock-folder"), (LOCK_COMMAND_NAME, "--lock-folder")]
     {
         let p = folder.join(name);
-        std::fs::write(&p, mac_launcher_text(flag)).map_err(|e| VaultError::from_io(&e, &p))?;
+        crate::filesystem::hidden::write_replacing(&p, mac_launcher_text(flag))
+            .map_err(|e| VaultError::from_io(&e, &p))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -424,10 +446,11 @@ pub fn lock_folder_in_place(
     }
 
     let readme_path = folder.join(IN_PLACE_README_NAME);
-    let _ = std::fs::write(&readme_path, IN_PLACE_README);
+    let _ = crate::filesystem::hidden::write_replacing(&readme_path, IN_PLACE_README);
     if launchers {
         write_launchers(folder)?;
     }
+    hide_artifacts(folder);
 
     let removal = crate::filesystem::secure_delete::remove_folder_contents(
         folder,

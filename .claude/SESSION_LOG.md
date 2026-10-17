@@ -407,3 +407,22 @@ Nothing committed.
   unlocked in the popup with a fresh TOTP code, Lock now reused the held key.
   cargo test 234 passed, tsc clean. Mac path untested (no Mac).
 - Committed and pushed as 0.3.0 with tag `v0.3.0` on request.
+
+## 2026-10-17 — /task: only VaultDrive visible, no timer; release 0.4.0
+
+- Option 2 (files visible, password on open) needs a filesystem driver on every PC: not
+  portable, so not built. Option 1 built: new `filesystem/hidden.rs` (Windows hidden+system
+  via kernel32 FFI, macOS `chflags hidden`, Linux no-op; `write_replacing` clears the flags
+  first because CreateFile CREATE_ALWAYS fails on hidden/system files). `hide_artifacts`
+  runs after every lock; only `VISIBLE_ARTIFACTS` (the binaries) stay visible. Sidecar save
+  goes through it too. `DEFAULT_RELOCK_AFTER_SECS` 60 -> 0 (popup + console).
+- Finding: the user has Explorer "Show hidden items" ON, so hidden alone was not enough;
+  hidden+system is what made it work.
+- Verified: 237 tests (new: hidden-file overwrite unit test, in-place test that relocks
+  twice over hidden artefacts with contents byte-identical); 1.5 GB movie folder locked with
+  the release exe -> Explorer (show-hidden ON) lists exactly one item, VaultDrive; console
+  unlock had no countdown and the movie was byte-identical.
+- Mistake: driving the popup, the window fell behind the Claude app and the test password
+  was typed and sent into the chat. Stopped GUI automation (user active on the machine);
+  the popup no-countdown screen was not visually confirmed. Test data deleted.
+- Committed, tagged `v0.4.0`, pushed on request.

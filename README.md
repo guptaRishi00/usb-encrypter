@@ -122,10 +122,13 @@ Mac needs the Xcode command-line tools and Rust, nothing else.
 
 A folder locked with "Make it open on other computers" carries its own copy of
 VaultDrive and a launcher for each platform. On Windows, double-click
-`VaultDrive.exe` inside the folder: a small window asks for the password or the
-authenticator code, opens the folder, and locks it again a minute later or as
-soon as the window is closed. No console appears. `Unlock.cmd` does the same in
-a console window, for a machine where the small window cannot start. On a Mac,
+`VaultDrive.exe` inside the folder, which is the only thing a locked folder
+shows: the vault, the launchers and the note are marked hidden and system, so
+they stay out of sight even with "Show hidden items" switched on. A small window
+asks for the password or the authenticator code and opens the folder, which
+stays open until you press Lock now or close the window. No console appears.
+`Unlock.cmd` (hidden) does the same in a console window, for a machine where the
+small window cannot start. On a Mac,
 double-click `Unlock.command`, which opens the same small window (Terminal stays
 open behind it) and needs the Mac program (`VaultDrive-macos`) to have been
 added by locking the folder once from a Mac; until then it says so and points
@@ -259,15 +262,15 @@ redirected pipe or file otherwise (a script), asks for the password without
 echo, tolerates a leading UTF-8 byte-order mark on piped input, and works on the
 folder it sits in. Console mode never starts Tauri, so it needs **no installation, no window and
 no WebView2**: plug the drive into any Windows machine and double-click
-`Unlock.cmd`. **After unlocking, the window stays open and locks the folder
-again after 60 seconds**, or as soon as you press Enter, reusing the key that
-unlocked it so nothing is asked twice. Two limits, stated plainly: closing the
-window instead kills the countdown and leaves the folder unlocked, and a file
-still open in another program cannot be deleted at relock time, so the launcher
-names it and offers a retry. The popup window below has neither limit on
-closing. `VaultDrive.exe --unlock-folder <dir>
---relock-after 0` disables the countdown; a script piping the password in never
-gets one, because a script that wanted the folder locked again would say so. The launchers are never encrypted into the vault
+`Unlock.cmd`. After unlocking there is **no countdown by default**: a folder
+holding a film has to stay open for as long as the film plays, so it stays open
+until it is locked again. `--relock-after SECONDS` brings a countdown back: the
+window then locks the folder after that many seconds, or as soon as you press
+Enter, reusing the key that unlocked it so nothing is asked twice. Two limits of
+that console countdown, stated plainly: closing the window kills it and leaves
+the folder unlocked, and a file still open in another program cannot be deleted
+at relock time, so the launcher names it and offers a retry. A script piping the
+password in never gets a countdown. The launchers are never encrypted into the vault
 and never deleted with the plaintext, on a first lock or a re-lock. There is no
 way to do this "without any program": Argon2id and XChaCha20-Poly1305 are not
 available to a bare `.cmd` or to PowerShell, so the folder has to carry the
@@ -281,10 +284,11 @@ does. `--popup <folder> [--relock-after SECONDS]` asks for it explicitly, and is
 what `Unlock.command` / `Lock.command` run on a Mac, falling back to console
 mode if the window cannot start. A locked folder gets a single field, for the
 password or the six-digit code depending on the folder; an unlocked one gets a
-form to lock it again. The countdown and the relock are owned by Rust, not the
-web view: after the unlock, a thread holds the key and waits for the deadline
-or "Lock now". **Closing the window never leaves the folder open**: a close
-during the unlock, the countdown or the relock is held back until the folder is
+form to lock it again. There is no countdown unless `--relock-after` asks for
+one. The relock is owned by Rust, not the web view: after the unlock, a thread
+holds the key and waits for "Lock now" (or the deadline, if there is one).
+**Closing the window never leaves the folder open**: a close during the unlock,
+while the folder is open, or during the relock is held back until the folder is
 locked again, and only then does the app exit. If the relock fails, for
 instance because a file is open in another program, the window says which
 files are still readable and offers to try again; closing at that point does

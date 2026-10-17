@@ -57,12 +57,13 @@ enum Mode {
     Lock,
 }
 
-/// How long an unlocked folder stays open before the launcher locks it again.
+/// How long an unlocked folder stays open before it is locked again.
 ///
-/// A minute is long enough to copy a file out or drop one in, short enough
-/// that a drive left in someone else's machine does not sit open all
-/// afternoon. `--relock-after 0` turns it off.
-pub const DEFAULT_RELOCK_AFTER_SECS: u64 = 60;
+/// Zero: no countdown. A folder holding a film has to stay open for as long
+/// as the film plays, so it stays open until the person locks it (the popup's
+/// Lock now, or closing the popup). `--relock-after SECONDS` brings a countdown
+/// back for anyone who wants one.
+pub const DEFAULT_RELOCK_AFTER_SECS: u64 = 0;
 
 /// Parse `--relock-after <seconds>` anywhere after the folder argument.
 pub(crate) fn relock_after_arg(args: &[String]) -> std::result::Result<u64, String> {
@@ -81,7 +82,7 @@ fn print_usage() {
     println!();
     println!("  VaultDrive.exe --unlock-folder <folder> [--relock-after SECONDS]");
     println!("      restore a folder locked in place, then lock it again after SECONDS");
-    println!("      (default {DEFAULT_RELOCK_AFTER_SECS}; 0 leaves it unlocked)");
+    println!("      (default {DEFAULT_RELOCK_AFTER_SECS}, which leaves it unlocked)");
     println!("  VaultDrive.exe --lock-folder <folder>     lock a folder in place");
     println!();
     println!("Run with no arguments to open the window.");
@@ -256,7 +257,7 @@ fn run(folder: Option<&str>, mode: Mode, relock_after: u64) -> i32 {
 /// relock time, so the launcher reports it and offers to try again.
 fn hold_then_relock(folder: &Path, name: &str, secret: &[u8], after_secs: u64) -> crate::error::Result<()> {
     if after_secs == 0 {
-        println!("Run Lock.cmd when you want to lock it again.");
+        println!("Double-click VaultDrive.exe in the folder, or run Lock.cmd, to lock it again.");
         return Ok(());
     }
     if !console::is_interactive() {
@@ -513,14 +514,14 @@ mod tests {
     }
 
     #[test]
-    fn relock_after_defaults_to_a_minute_and_parses_an_override() {
+    fn relock_after_defaults_to_no_countdown_and_parses_an_override() {
         let base = |extra: &[&str]| {
             let mut v = vec!["x".to_string(), "--unlock-folder".to_string(), "dir".to_string()];
             v.extend(extra.iter().map(|s| s.to_string()));
             v
         };
         assert_eq!(relock_after_arg(&base(&[])), Ok(DEFAULT_RELOCK_AFTER_SECS));
-        assert_eq!(DEFAULT_RELOCK_AFTER_SECS, 60);
+        assert_eq!(DEFAULT_RELOCK_AFTER_SECS, 0);
         assert_eq!(relock_after_arg(&base(&["--relock-after", "5"])), Ok(5));
         assert_eq!(relock_after_arg(&base(&["--relock-after", "0"])), Ok(0));
         assert!(relock_after_arg(&base(&["--relock-after"])).is_err());

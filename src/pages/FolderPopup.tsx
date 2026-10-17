@@ -221,7 +221,10 @@ export function FolderPopup({ info }: { info: PopupInfo }) {
             <LockIcon size={16} />
             Lock now
           </button>
-          <span className="faint">Closing this window locks the folder too.</span>
+          <span className="faint">
+            The folder stays open while this window is open. Closing the window locks it, so
+            close anything playing from the folder first.
+          </span>
         </div>
       )}
 

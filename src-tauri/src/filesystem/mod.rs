@@ -8,6 +8,7 @@
 
 pub mod atomic;
 pub mod drives;
+pub mod hidden;
 pub mod scan;
 pub mod secure_delete;
 

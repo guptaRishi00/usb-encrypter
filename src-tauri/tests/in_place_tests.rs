@@ -100,6 +100,47 @@ fn launchers_make_the_folder_self_contained() {
 }
 
 #[test]
+fn only_the_program_is_visible_and_a_hidden_folder_still_relocks() {
+    use vaultdrive_lib::filesystem::hidden::is_hidden;
+    use vaultdrive_lib::vault::{IN_PLACE_ARTIFACTS, LAUNCHER_EXE_NAME, VISIBLE_ARTIFACTS};
+
+    let fx = Fixture::new();
+    let folder = sample(&fx);
+    let before = tree(&folder);
+    lock_with_launchers(&folder, "gravel-tunnel-9").unwrap();
+
+    let check_hidden = |folder: &Path| {
+        for name in IN_PLACE_ARTIFACTS {
+            let p = folder.join(name);
+            if !p.exists() {
+                continue;
+            }
+            let visible = VISIBLE_ARTIFACTS.contains(&name);
+            // Platforms without a hidden flag report None and are not judged.
+            if let Some(h) = is_hidden(&p) {
+                assert_eq!(h, !visible, "{name}: hidden should be {}", !visible);
+            }
+        }
+    };
+    check_hidden(&folder);
+    if cfg!(windows) {
+        assert_eq!(is_hidden(&folder.join(LAUNCHER_EXE_NAME)), Some(false));
+        assert_eq!(is_hidden(&folder.join(IN_PLACE_VAULT_NAME)), Some(true));
+    }
+
+    // Unlock and lock again over files that are now hidden. Windows refuses a
+    // plain overwrite of a hidden file, so this is the case that would break.
+    unlock_folder_in_place(&folder, b"gravel-tunnel-9", &NoProgress).unwrap();
+    lock_with_launchers(&folder, "gravel-tunnel-9").unwrap();
+    check_hidden(&folder);
+    unlock_folder_in_place(&folder, b"gravel-tunnel-9", &NoProgress).unwrap();
+
+    let mut after = tree(&folder);
+    after.retain(|k, _| !IN_PLACE_ARTIFACTS.iter().any(|a| a.eq_ignore_ascii_case(k)));
+    assert_eq!(after, before, "contents survive two hidden-file lock cycles");
+}
+
+#[test]
 fn a_mac_binary_left_by_another_platform_is_treated_as_an_artefact() {
     use vaultdrive_lib::vault::{LAUNCHER_MAC_NAME, OpenVault, IN_PLACE_VAULT_NAME};
 

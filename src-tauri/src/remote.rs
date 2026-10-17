@@ -64,7 +64,10 @@ impl RemoteAuth {
         let path = folder.join(REMOTE_AUTH_FILE);
         let json = serde_json::to_string_pretty(self)
             .map_err(|_| VaultError::Io("Could not encode the authenticator record.".into()))?;
-        std::fs::write(&path, json).map_err(|e| VaultError::from_io(&e, &path))
+        crate::filesystem::hidden::write_replacing(&path, json)
+            .map_err(|e| VaultError::from_io(&e, &path))?;
+        crate::filesystem::hidden::set_hidden(&path, true);
+        Ok(())
     }
 }
 
