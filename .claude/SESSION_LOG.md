@@ -465,3 +465,9 @@ Nothing committed.
   milong player too (graceful close; milong stays locked). Lesson: kill by PID, never by name.
 - /task push + release: nothing but this log changed since v0.5.0 (already built, success).
   Pushed the log; no new tag, since a release would contain the identical app.
+
+## 2026-10-17 — /task: "the build didn't trigger"
+
+- Working as designed: build.yml runs on `v*` tags and manual dispatch only; the last push was
+  an untagged log commit. User asked for a release twice, so cut 0.5.1 (same app as 0.5.0,
+  version bump only) and pushed tag `v0.5.1`.
